@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 declare global { interface Window { ort: any } }
 let inferenceSession: any = null;
+let inferenceModelPath = "";
 
 const Arrow = () => <span aria-hidden="true">↗</span>;
 
@@ -15,6 +16,39 @@ const benchmarkGroups = [
   { id: "SCRATCH", time: "23 images", status: "Reject", confidence: "Anomaly", issue: "Surface damage" },
 ];
 
+const scenarios = {
+  metal_nut: {
+    name: "Metal nut", area: "Automotive components", input: "metal-nut", modelPath: "/models/forgesight-metal-nut.onnx", modelSize: "17 MB", threshold: .7668, pixelThreshold: .5677, usePredLabel: false,
+    training: 220, testing: 115, imageAuRoc: 94.38, imageF1: 94.62, pixelAuRoc: 98.13, pixelF1: 82.17, download: "/samples/forgesight-test-data.zip",
+    checks: ["Bent or deformed geometry", "Surface scratches and discoloration", "Incorrect orientation or flipped parts"],
+    samples: [{ id: "good", label: "Normal", truth: "Acceptable part" }, { id: "bent", label: "Bent", truth: "Bent geometry" }, { id: "color", label: "Color", truth: "Discoloration" }, { id: "flip", label: "Flipped", truth: "Flipped orientation" }, { id: "scratch", label: "Scratch", truth: "Surface scratch" }],
+    groups: benchmarkGroups,
+  },
+  bottle: {
+    name: "Bottle", area: "Packaging", input: "bottle", modelPath: "/models/forgesight-bottle.onnx", modelSize: "23 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
+    training: 209, testing: 83, imageAuRoc: 100, imageF1: 99.20, pixelAuRoc: 97.83, pixelF1: 66.92, download: "/samples/bottle-test-data.zip",
+    checks: ["Large or small breaks around the rim", "Foreign material or contamination", "Bottle silhouette and surface consistency"],
+    samples: [{ id: "good", label: "Normal", truth: "Acceptable bottle" }, { id: "broken-large", label: "Large break", truth: "Large rim break" }, { id: "broken-small", label: "Small break", truth: "Small rim break" }, { id: "contamination", label: "Contamination", truth: "Contamination" }],
+    groups: [{ id: "GOOD", time: "20 images", status: "Pass", confidence: "Normal", issue: "Acceptable bottles" }, { id: "BROKEN LARGE", time: "20 images", status: "Reject", confidence: "Anomaly", issue: "Large rim break" }, { id: "BROKEN SMALL", time: "22 images", status: "Reject", confidence: "Anomaly", issue: "Small rim break" }, { id: "CONTAMINATION", time: "21 images", status: "Reject", confidence: "Anomaly", issue: "Foreign material" }],
+  },
+  cable: {
+    name: "Cable assembly", area: "Electronics", input: "cable assembly", modelPath: "/models/forgesight-cable.onnx", modelSize: "24 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
+    training: 224, testing: 150, imageAuRoc: 98.28, imageF1: 94.97, pixelAuRoc: 98.20, pixelF1: 63.26, download: "/samples/cable-test-data.zip",
+    checks: ["Bent, cut, or punctured wires", "Missing, swapped, or misplaced cable sections", "Combined assembly and insulation defects"],
+    samples: [{ id: "good", label: "Normal", truth: "Acceptable cable assembly" }, { id: "bent-wire", label: "Bent wire", truth: "Bent wire" }, { id: "combined", label: "Combined", truth: "Multiple defects" }, { id: "missing-cable", label: "Missing cable", truth: "Missing cable" }],
+    groups: [{ id: "GOOD", time: "58 images", status: "Pass", confidence: "Normal", issue: "Acceptable assemblies" }, { id: "BENT WIRE", time: "13 images", status: "Reject", confidence: "Anomaly", issue: "Wire geometry" }, { id: "CABLE SWAP", time: "12 images", status: "Reject", confidence: "Anomaly", issue: "Wrong position" }, { id: "COMBINED", time: "11 images", status: "Reject", confidence: "Anomaly", issue: "Multiple defects" }, { id: "INSULATION", time: "34 images", status: "Reject", confidence: "Anomaly", issue: "Cut or puncture" }, { id: "MISSING", time: "22 images", status: "Reject", confidence: "Anomaly", issue: "Missing wire/cable" }],
+  },
+  pill: {
+    name: "Pill", area: "Pharma", input: "pill", modelPath: "/models/forgesight-pill.onnx", modelSize: "27 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
+    training: 267, testing: 167, imageAuRoc: 93.18, imageF1: 95.14, pixelAuRoc: 98.04, pixelF1: 71.63, download: "/samples/pill-test-data.zip",
+    checks: ["Cracks and visible surface damage", "Color deviation or contamination", "Faulty imprint, shape, and pill type consistency"],
+    samples: [{ id: "good", label: "Normal", truth: "Acceptable pill" }, { id: "color", label: "Color", truth: "Color deviation" }, { id: "contamination", label: "Contamination", truth: "Contamination" }, { id: "crack", label: "Crack", truth: "Crack" }, { id: "faulty-imprint", label: "Imprint", truth: "Faulty imprint" }],
+    groups: [{ id: "GOOD", time: "26 images", status: "Pass", confidence: "Normal", issue: "Acceptable pills" }, { id: "COLOR", time: "25 images", status: "Reject", confidence: "Anomaly", issue: "Color deviation" }, { id: "CONTAMINATION", time: "21 images", status: "Reject", confidence: "Anomaly", issue: "Foreign material" }, { id: "CRACK", time: "26 images", status: "Reject", confidence: "Anomaly", issue: "Surface crack" }, { id: "IMPRINT", time: "19 images", status: "Reject", confidence: "Anomaly", issue: "Faulty imprint" }, { id: "OTHER", time: "50 images", status: "Reject", confidence: "Anomaly", issue: "Combined/type/scratch" }],
+  },
+} as const;
+
+type ScenarioId = keyof typeof scenarios;
+
 function Mark({ dark = false }: { dark?: boolean }) {
   return <span className={`mark ${dark ? "mark-dark" : ""}`} aria-hidden="true"><i /><i /><i /></span>;
 }
@@ -23,15 +57,19 @@ export default function Home() {
   const [demo, setDemo] = useState(false);
   const [live, setLive] = useState(true);
   const [reviewed, setReviewed] = useState(false);
+  const [scenarioId, setScenarioId] = useState<ScenarioId>("metal_nut");
   const [sample, setSample] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<{ confidence: number; finding: string; x: number; y: number; heatmap: string } | null>(null);
+  const [analysis, setAnalysis] = useState<{ confidence: number; finding: string; x: number; y: number; heatmap: string; affected: number } | null>(null);
+  const [knownTruth, setKnownTruth] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [modelStatus, setModelStatus] = useState("Model ready · PatchCore ResNet-18");
   const [view, setView] = useState("command");
   const fileInput = useRef<HTMLInputElement>(null);
+  const activeScenario = scenarios[scenarioId];
 
-  const inspectSample = (file?: File) => {
+  const inspectSample = (file?: File, groundTruth?: string) => {
     if (!file || !file.type.startsWith("image/")) return;
+    setKnownTruth(groundTruth ?? null);
     const url = URL.createObjectURL(file);
     setSample(url); setAnalysis(null); setAnalyzing(true); setDemo(true);
     const image = new Image();
@@ -51,12 +89,15 @@ export default function Home() {
       try {
         const ort = window.ort;
         if (!ort) throw new Error("Inference runtime is still loading");
-        setModelStatus(inferenceSession ? "Running real inference…" : "Loading trained model · 17 MB…");
-        inferenceSession ??= await ort.InferenceSession.create("/models/forgesight-metal-nut.onnx", { executionProviders: ["wasm"] });
+        setModelStatus(inferenceSession && inferenceModelPath === activeScenario.modelPath ? "Running real inference…" : `Loading trained model · ${activeScenario.modelSize}…`);
+        if (!inferenceSession || inferenceModelPath !== activeScenario.modelPath) {
+          inferenceSession = await ort.InferenceSession.create(activeScenario.modelPath, { executionProviders: ["wasm"] });
+          inferenceModelPath = activeScenario.modelPath;
+        }
         setModelStatus("Running real inference…");
         const result = await inferenceSession.run({ input: new ort.Tensor("float32", input, [1, 3, size, size]) });
         const score = Number(result.pred_score.data[0]);
-        const label = score >= 0.7668;
+        const label = activeScenario.usePredLabel ? Boolean(result.pred_label.data[0]) : score >= activeScenario.threshold;
         const map = result.anomaly_map.data as Float32Array;
         let max = -Infinity, maxIndex = 0, min = Infinity;
         for (let i = 0; i < map.length; i++) { if (map[i] > max) { max = map[i]; maxIndex = i; } if (map[i] < min) min = map[i]; }
@@ -64,9 +105,10 @@ export default function Home() {
         const heatCtx = heat.getContext("2d");
         if (!heatCtx) throw new Error("Heatmap rendering unavailable");
         const heatPixels = heatCtx.createImageData(size, size); const spread = Math.max(.0001, max - min);
-        for (let i = 0; i < map.length; i++) { const a = Math.max(0, Math.min(210, ((map[i] - min) / spread - .35) * 320)); heatPixels.data[i * 4] = 255; heatPixels.data[i * 4 + 1] = 76; heatPixels.data[i * 4 + 2] = 18; heatPixels.data[i * 4 + 3] = a; }
+        let affectedPixels = 0;
+        for (let i = 0; i < map.length; i++) { const a = Math.max(0, Math.min(210, ((map[i] - min) / spread - .35) * 320)); heatPixels.data[i * 4] = 255; heatPixels.data[i * 4 + 1] = 76; heatPixels.data[i * 4 + 2] = 18; heatPixels.data[i * 4 + 3] = a; if (map[i] >= activeScenario.pixelThreshold) affectedPixels++; }
         heatCtx.putImageData(heatPixels, 0, 0);
-        setAnalysis({ confidence: score * 100, finding: label ? "Anomaly detected" : "No anomaly detected", x: (maxIndex % size) / size * 100, y: Math.floor(maxIndex / size) / size * 100, heatmap: heat.toDataURL() });
+        setAnalysis({ confidence: score * 100, finding: label ? "Anomaly detected" : "No anomaly detected", x: (maxIndex % size) / size * 100, y: Math.floor(maxIndex / size) / size * 100, heatmap: heat.toDataURL(), affected: affectedPixels / map.length * 100 });
         setModelStatus("Real model complete · local inference");
       } catch (error) {
         console.error(error); setModelStatus("Model failed to load · retry upload");
@@ -75,18 +117,29 @@ export default function Home() {
     image.src = url;
   };
 
-  const inspectBundledSample = async (kind: "good" | "bent" | "color" | "flip" | "scratch") => {
+  const inspectBundledSample = async (kind: string, truth: string) => {
     setView("live");
     setModelStatus("Preparing verified benchmark sample…");
     try {
-      const response = await fetch(`/samples/metal-nut-${kind}.png?v=compact2`);
+      const samplePrefix = scenarioId === "metal_nut" ? "metal-nut" : scenarioId;
+      const response = await fetch(`/samples/${samplePrefix}-${kind}.png?v=scenarios1`);
       if (!response.ok) throw new Error("Benchmark sample unavailable");
       const blob = await response.blob();
-      inspectSample(new File([blob], `metal-nut-${kind}.png`, { type: "image/png" }));
+      inspectSample(new File([blob], `${samplePrefix}-${kind}.png`, { type: "image/png" }), truth);
     } catch (error) {
       console.error(error);
       setModelStatus("Sample failed to load · try your own image");
     }
+  };
+
+  const changeScenario = (next: ScenarioId) => {
+    setScenarioId(next);
+    setSample(null);
+    setAnalysis(null);
+    setKnownTruth(null);
+    setReviewed(false);
+    setView("live");
+    setModelStatus(`Model ready · ${scenarios[next].name} PatchCore`);
   };
 
   useEffect(() => {
@@ -117,22 +170,22 @@ export default function Home() {
         </div>
 
         <div className="machine-visual" aria-label="Illustration of an AI inspection station">
-          <div className="visual-label"><span>STATION 04</span><b>LIVE</b></div>
+          <div className="visual-label"><span>STATION CONCEPT</span><b>ILLUSTRATION</b></div>
           <div className="camera"><div className="lens" /></div>
           <div className="scan-line" />
-          <div className="part"><i /><i /><i /><span className="target">CRACK<br /><b>0.18 mm</b></span></div>
+          <div className="part"><i /><i /><i /><span className="target">EXAMPLE<br /><b>REGION</b></span></div>
           <div className="belt"><i /><i /><i /><i /></div>
-          <div className="readout"><small>ANALYSIS</small><strong>Surface integrity</strong><p><span>Confidence</span><b>98.7%</b></p><div><i /></div></div>
+          <div className="readout"><small>CONCEPT OVERLAY</small><strong>Surface integrity</strong><p><span>Not live data</span><b>DEMO</b></p><div><i /></div></div>
           <div className="coordinate">X 127.4&nbsp;&nbsp; Y 048.2</div>
         </div>
       </section>
 
       <section className="proof">
         <div className="shell proof-grid">
-          <div><strong>99.7<sup>%</sup></strong><span>Detection accuracy</span></div>
-          <div><strong>&lt;12<sup>ms</sup></strong><span>Inspection latency</span></div>
-          <div><strong>68<sup>%</sup></strong><span>Less quality waste</span></div>
-          <div><strong>2.4<sup>×</sup></strong><span>Faster root cause</span></div>
+          <div><strong>94.38<sup>%</sup></strong><span>Measured image AUROC</span></div>
+          <div><strong>94.62<sup>%</sup></strong><span>Measured image F1</span></div>
+          <div><strong>98.13<sup>%</sup></strong><span>Measured pixel AUROC</span></div>
+          <div><strong>82.17<sup>%</sup></strong><span>Measured pixel F1</span></div>
         </div>
       </section>
 
@@ -173,20 +226,21 @@ export default function Home() {
       {demo && <div className="demo" role="dialog" aria-modal="true" aria-label="ForgeSight live inspection demo">
         <div className="demo-top"><div className="brand"><Mark dark /><b>FORGESIGHT</b><small>AI</small></div><div><span className={live ? "online" : "offline"}>{live ? "● LINE ONLINE" : "● LINE PAUSED"}</span><button onClick={() => setDemo(false)} aria-label="Close demo">×</button></div></div>
         <div className="demo-body">
-          <aside><small>WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Model registry</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>FS</span><p><b>ForgeSight POC</b><small>MVTec · metal nut</small></p></div></aside>
+          <aside><small>WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Model registry</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>FS</span><p><b>{activeScenario.name}</b><small>{activeScenario.area} · validated</small></p></div></aside>
           <section className="dash">
-            <div className="dash-head"><div><small>REAL MODEL POC · METAL NUT</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Model registry"}</h2></div><div className="dash-actions"><input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && <><button data-testid="try-good" onClick={() => inspectBundledSample("good")}>Normal</button><button onClick={() => inspectBundledSample("bent")}>Bent</button><button onClick={() => inspectBundledSample("color")}>Color</button><button onClick={() => inspectBundledSample("flip")}>Flipped</button><button data-testid="try-scratch" onClick={() => inspectBundledSample("scratch")}>Scratch</button><a className="sample-download" href="/samples/forgesight-test-data.zip" download>Download test data</a></>}<button className="inspect-button" onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
-            <div className="model-note"><b data-testid="model-status">{modelStatus}</b><span>Trained on 220 acceptable parts · evaluated on 115 unseen images · CC BY-NC-SA benchmark only</span></div>
-            {(view === "command" || view === "intelligence") && <div className="dash-metrics"><article><small>TRAINING IMAGES</small><b>220</b><span>Acceptable parts only</span></article><article><small>TEST IMAGES</small><b>115</b><span>Held-out benchmark split</span></article><article><small>IMAGE F1</small><b>94.62%</b><span>Measured</span></article><article><small>IMAGE AUROC</small><b>94.38%</b><span>Measured</span></article></div>}
+            <div className="dash-head"><div><small>REAL MODEL POC · {activeScenario.name.toUpperCase()}</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Model registry"}</h2></div><div className="dash-actions"><label className="scenario-selector"><span>Scenario</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut</option><option value="bottle">Bottle packaging</option><option value="cable">Cable assembly</option><option value="pill">Pill inspection</option></select></label><input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>Download test data</a></>}<button className="inspect-button" onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
+            <div className="model-note"><b data-testid="model-status">{modelStatus}</b><span>Trained on {activeScenario.training} acceptable samples · evaluated on {activeScenario.testing} unseen images · CC BY-NC-SA benchmark only</span></div>
+            {(view === "command" || view === "intelligence") && <div className="dash-metrics"><article><small>TRAINING IMAGES</small><b>{activeScenario.training}</b><span>Acceptable samples only</span></article><article><small>TEST IMAGES</small><b>{activeScenario.testing}</b><span>Held-out benchmark split</span></article><article><small>IMAGE F1</small><b>{activeScenario.imageF1.toFixed(2)}%</b><span>Measured</span></article><article><small>IMAGE AUROC</small><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><span>Measured</span></article></div>}
             {(view === "command" || view === "live") && <div className="dash-grid">
-              <article className="live-panel"><div className="panel-title"><div><span className={live ? "pulse" : "paused"} /> <b>{sample ? "Uploaded sample · real inference" : "Upload a metal-nut image"}</b></div><small>{analyzing ? "ANALYZING…" : "PATCHCORE · ONNX"}</small></div><div className={`feed ${sample ? "sample-feed" : ""}`}>{sample ? <img src={sample} alt="Uploaded manufacturing sample" /> : <button className="upload-empty" onClick={() => fileInput.current?.click()}>Choose an image to run the model</button>}{analysis && <img className="heatmap" src={analysis.heatmap} alt="Model anomaly heatmap" />}{analysis && <span className="detect-box uploaded-box" style={{ left: `${analysis.x}%`, top: `${analysis.y}%` }}><b>{analysis.finding.toUpperCase()}</b>{analysis.confidence.toFixed(1)}</span>}{analyzing && <div className="analysis-scan" />}<small>{sample ? "REAL PATCHCORE ANOMALY MAP" : "NO SAMPLE SELECTED"}</small></div><div className="feed-result"><div><small>DECISION</small><b data-testid="model-decision" className="reject">{analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY" : "NORMAL") : "—"}</b></div><div><small>MODEL</small><b>PatchCore / R18</b></div><div><small>ANOMALY SCORE</small><b data-testid="anomaly-score">{analysis ? analysis.confidence.toFixed(2) : "—"}</b></div></div></article>
-              <article className="trend"><div className="panel-title"><b>Held-out benchmark</b><small>MEASURED</small></div><div className="metric-bars"><p><span>Image AUROC</span><b>94.38%</b><i style={{width:"94.38%"}} /></p><p><span>Image F1</span><b>94.62%</b><i style={{width:"94.62%"}} /></p><p><span>Pixel AUROC</span><b>98.13%</b><i style={{width:"98.13%"}} /></p><p><span>Pixel F1</span><b>82.17%</b><i style={{width:"82.17%"}} /></p></div><div className="trend-foot"><small>STATUS</small><b>Validated</b><span>115 images</span></div></article>
+              <article className="live-panel"><div className="panel-title"><div><span className={live ? "pulse" : "paused"} /> <b>{sample ? "Uploaded sample · real inference" : `Upload a ${activeScenario.input} image`}</b></div><small>{analyzing ? "ANALYZING…" : "PATCHCORE · ONNX"}</small></div><div className={`feed ${sample ? "sample-feed" : ""}`}>{sample ? <img src={sample} alt="Uploaded manufacturing sample" /> : <button className="upload-empty" onClick={() => fileInput.current?.click()}>Choose an image to run the model</button>}{analysis && <img className="heatmap" src={analysis.heatmap} alt="Model anomaly heatmap" />}{analysis && <span className="detect-box uploaded-box" style={{ left: `${analysis.x}%`, top: `${analysis.y}%` }}><b>{analysis.finding.toUpperCase()}</b>{analysis.confidence.toFixed(1)}</span>}{analyzing && <div className="analysis-scan" />}<small>{sample ? "REAL PATCHCORE ANOMALY MAP" : "NO SAMPLE SELECTED"}</small></div><div className="feed-result"><div><small>DECISION</small><b data-testid="model-decision" className="reject">{analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY" : "NORMAL") : "—"}</b></div><div><small>MODEL</small><b>{activeScenario.name} / R18</b></div><div><small>ANOMALY SCORE</small><b data-testid="anomaly-score">{analysis ? analysis.confidence.toFixed(2) : "—"}</b></div></div></article>
+              <article className="trend"><div className="panel-title"><b>Held-out benchmark</b><small>MEASURED</small></div><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><div className="trend-foot"><small>STATUS</small><b>Validated</b><span>{activeScenario.testing} images</span></div></article>
             </div>}
-            {(view === "command" || view === "trace") && <article className="recent"><div className="panel-title"><b>Benchmark test composition</b><small>115 TRACEABLE RECORDS</small></div><div className="table"><div className="tr th"><span>GROUND TRUTH</span><span>SAMPLES</span><span>EXPECTED</span><span>CLASS</span><span>DEFECT TYPE</span></div>{benchmarkGroups.map(row => <div className="tr" key={row.id}><b>{row.id}</b><span>{row.time}</span><span className={`status ${row.status.toLowerCase()}`}>{row.status}</span><span>{row.confidence}</span><span>{row.issue}</span></div>)}</div></article>}
+            {view === "live" && analysis && <article className="explanation-card" data-testid="result-explanation"><div><small>WHAT WAS CHECKED</small><h3>{activeScenario.name} visual consistency</h3><ul>{activeScenario.checks.map(check => <li key={check}>{check}</li>)}</ul></div><div><small>WHAT THE MODEL FOUND</small><dl><dt>Decision</dt><dd>{analysis.finding.startsWith("Anomaly") ? "Anomaly — review required" : "Normal — within learned range"}</dd><dt>Model anomaly score</dt><dd>{analysis.confidence.toFixed(2)}</dd><dt>Peak location</dt><dd>X {analysis.x.toFixed(1)}% · Y {analysis.y.toFixed(1)}%</dd><dt>Highlighted area</dt><dd>{analysis.affected.toFixed(2)}% of image</dd></dl></div><div><small>INTERPRETATION</small><p>{knownTruth ? <><b>Known benchmark label:</b> {knownTruth}. This label comes from the test dataset, not from the model.</> : "The model detected and localized visual deviation. An operator must confirm the exact defect type and root cause."}</p><p className="guidance"><b>Recommended action:</b> {analysis.finding.startsWith("Anomaly") ? "Hold the item and send it to Review queue." : "Accept for this POC, subject to the production quality plan."}</p></div></article>}
+            {(view === "command" || view === "trace") && <article className="recent"><div className="panel-title"><b>Benchmark test composition</b><small>{activeScenario.testing} TRACEABLE RECORDS</small></div><div className="table"><div className="tr th"><span>GROUND TRUTH</span><span>SAMPLES</span><span>EXPECTED</span><span>CLASS</span><span>DEFECT TYPE</span></div>{activeScenario.groups.map(row => <div className="tr" key={row.id}><b>{row.id}</b><span>{row.time}</span><span className={`status ${row.status.toLowerCase()}`}>{row.status}</span><span>{row.confidence}</span><span>{row.issue}</span></div>)}</div></article>}
             {view === "review" && <div className="workspace-view"><article className="review-work"><div><small>CURRENT REVIEW</small><h3>{analysis ? analysis.finding : "No inspection awaiting review"}</h3><p>{analysis ? `Model anomaly score: ${analysis.confidence.toFixed(2)}. Confirm whether the highlighted region should be accepted as a true anomaly.` : "Run an image through Live inspection to create a review item."}</p>{sample && <img src={sample} alt="Part awaiting review" />}</div><div className="review-actions"><button disabled={!analysis} onClick={() => setReviewed(true)}>Confirm anomaly</button><button disabled={!analysis} onClick={() => setReviewed(true)}>Mark acceptable</button><span>{reviewed ? "Decision saved to this session." : "Human decision pending."}</span></div></article></div>}
-            {view === "intelligence" && <div className="workspace-view"><article className="result-card"><h3>Held-out evaluation</h3><div className="metric-bars"><p><span>Image AUROC</span><b>94.38%</b><i style={{width:"94.38%"}} /></p><p><span>Image F1</span><b>94.62%</b><i style={{width:"94.62%"}} /></p><p><span>Pixel AUROC</span><b>98.13%</b><i style={{width:"98.13%"}} /></p><p><span>Pixel F1</span><b>82.17%</b><i style={{width:"82.17%"}} /></p></div><p className="disclaimer">Measured on the MVTec AD metal-nut test split. These results are benchmark evidence, not customer production performance.</p></article></div>}
+            {view === "intelligence" && <div className="workspace-view"><article className="result-card"><h3>{activeScenario.name} held-out evaluation</h3><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><p className="disclaimer">Measured on the MVTec AD {activeScenario.name.toLowerCase()} test split. These results are benchmark evidence, not customer production performance.</p></article></div>}
             {view === "lines" && <div className="workspace-view"><article className="station-card"><div><span className={live ? "pulse" : "paused"} /><b>POC browser station</b><small>{live ? "Online" : "Paused"}</small></div><dl><dt>Runtime</dt><dd>ONNX Runtime Web / WASM</dd><dt>Model</dt><dd>PatchCore ResNet-18</dd><dt>Input</dt><dd>256 × 256 RGB</dd><dt>Processing</dt><dd>Local in this browser</dd></dl></article></div>}
-            {view === "registry" && <div className="workspace-view"><article className="registry-card"><div className="registry-title"><span>ACTIVE</span><h3>Metal Nut Anomaly v1.0</h3><p>PatchCore · ResNet-18 · 17 MB ONNX</p></div><dl><dt>Training set</dt><dd>220 good images</dd><dt>Validation set</dt><dd>115 held-out images</dd><dt>Image F1</dt><dd>94.62%</dd><dt>Pixel F1</dt><dd>82.17%</dd><dt>License constraint</dt><dd>Non-commercial benchmark</dd></dl></article></div>}
+            {view === "registry" && <div className="workspace-view"><article className="registry-card"><div className="registry-title"><span>ACTIVE</span><h3>{activeScenario.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {activeScenario.modelSize} ONNX</p></div><dl><dt>Training set</dt><dd>{activeScenario.training} good images</dd><dt>Validation set</dt><dd>{activeScenario.testing} held-out images</dd><dt>Image F1</dt><dd>{activeScenario.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{activeScenario.pixelF1.toFixed(2)}%</dd><dt>License constraint</dt><dd>Non-commercial benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>DATASET PREPARATION</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Not yet trained — unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article></div>}
             {view === "settings" && <div className="workspace-view"><article className="settings-card"><h3>POC settings</h3><label><span>Decision source</span><select defaultValue="model"><option value="model">Trained model threshold</option></select></label><label><span>Inference device</span><select defaultValue="browser"><option value="browser">Local browser (WASM)</option></select></label><label><span>Heatmap overlay</span><input type="checkbox" defaultChecked /></label><p>Settings are device-local for this proof of concept. Production settings require authenticated, persistent storage.</p></article></div>}
           </section>
         </div>
