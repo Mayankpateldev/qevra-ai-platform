@@ -64,7 +64,7 @@ test("ships every real inference asset used by the scenario selector", async () 
 });
 
 test("protects production write and history APIs", async () => {
-  for (const path of ["/api/inspections", "/api/reviews", "/api/datasets/snapshots", "/api/models", "/api/deployments"]) {
+  for (const path of ["/api/catalog", "/api/inspections", "/api/reviews", "/api/datasets", "/api/datasets/assets?datasetId=missing", "/api/datasets/snapshots", "/api/training/jobs", "/api/models", "/api/deployments"]) {
     const response = await render(path);
     assert.equal(response.status, 401, `${path} must reject anonymous access`);
     assert.deepEqual(await response.json(), { error: "Authentication required" });

@@ -1,10 +1,31 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { getDb } from "../../../../db";
 import { auditEvents, datasetAssets, datasets } from "../../../../db/schema";
 import { platformErrorResponse, qualityDataBucket, requirePlatformUser, stableId } from "../../../../lib/platform";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/tiff"]);
+
+export async function GET(request: Request) {
+  try {
+    const user = await requirePlatformUser();
+    const url = new URL(request.url);
+    const datasetId = url.searchParams.get("datasetId")?.trim() ?? "";
+    const before = url.searchParams.get("before")?.trim();
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 100), 1), 250);
+    if (!datasetId) return Response.json({ error: "datasetId is required" }, { status: 400 });
+    const db = getDb();
+    const [dataset] = await db.select({ id: datasets.id }).from(datasets).where(and(eq(datasets.id, datasetId), eq(datasets.organizationId, user.organizationId))).limit(1);
+    if (!dataset) return Response.json({ error: "Dataset not found" }, { status: 404 });
+    const where = before
+      ? and(eq(datasetAssets.datasetId, datasetId), eq(datasetAssets.organizationId, user.organizationId), lt(datasetAssets.createdAt, before))
+      : and(eq(datasetAssets.datasetId, datasetId), eq(datasetAssets.organizationId, user.organizationId));
+    const rows = await db.select().from(datasetAssets).where(where).orderBy(desc(datasetAssets.createdAt)).limit(limit + 1);
+    const hasMore = rows.length > limit;
+    const assets = rows.slice(0, limit);
+    return Response.json({ assets, nextCursor: hasMore ? assets.at(-1)?.createdAt ?? null : null });
+  } catch (error) { return platformErrorResponse(error); }
+}
 
 export async function POST(request: Request) {
   try {

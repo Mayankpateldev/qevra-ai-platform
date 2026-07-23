@@ -68,6 +68,14 @@ type InspectionRecord = {
   inspectedAt: string;
 };
 
+type DatasetRecord = { id: string; recipeId: string; name: string; status: string; imageCount: number; byteCount: number; updatedAt: string };
+type DatasetAssetRecord = { id: string; filename: string; byteSize: number; checksum: string; label: string | null; split: string; createdAt: string };
+type SnapshotRecord = { id: string; datasetId: string; version: number; name: string; imageCount: number; labelSummaryJson: string; splitSummaryJson: string; createdAt: string };
+type TrainingJobRecord = { id: string; recipeId: string; snapshotId: string; status: string; providerJobId: string | null; requestedBy: string; metricsJson: string; failureMessage: string | null; createdAt: string };
+type ModelRecord = { id: string; recipeId: string; version: number; status: string; metricsJson: string; approvedBy: string | null; approvedAt: string | null; createdAt: string };
+type DeploymentRecord = { id: string; modelId: string; stationId: string; environment: string; status: string; deployedBy: string; createdAt: string };
+type CatalogRecord = { productId: string; family: string; sku: string; variant: string; productStatus: string; recipeId: string; recipeName: string; taskType: string; recipeStatus: string; cameraProfile: string; activeModelId: string | null; updatedAt: string };
+
 function Mark({ dark = false }: { dark?: boolean }) {
   return <span className={`mark ${dark ? "mark-dark" : ""}`} aria-hidden="true"><i /><i /><i /></span>;
 }
@@ -82,6 +90,19 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
   const [persistenceMessage, setPersistenceMessage] = useState("No inspection has been saved yet");
   const [inspectionHistory, setInspectionHistory] = useState<InspectionRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [datasets, setDatasets] = useState<DatasetRecord[]>([]);
+  const [datasetAssets, setDatasetAssets] = useState<DatasetAssetRecord[]>([]);
+  const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
+  const [trainingJobs, setTrainingJobs] = useState<TrainingJobRecord[]>([]);
+  const [models, setModels] = useState<ModelRecord[]>([]);
+  const [deployments, setDeployments] = useState<DeploymentRecord[]>([]);
+  const [catalog, setCatalog] = useState<CatalogRecord[]>([]);
+  const [medicineSku, setMedicineSku] = useState("");
+  const [medicineVariant, setMedicineVariant] = useState("");
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [selectedSnapshotId, setSelectedSnapshotId] = useState("");
+  const [operationsLoading, setOperationsLoading] = useState(false);
+  const [operationsMessage, setOperationsMessage] = useState("Production records load from persistent workspace storage");
   const [scenarioId, setScenarioId] = useState<ScenarioId>("metal_nut");
   const [pillVariantId, setPillVariantId] = useState<PillVariantId>("benchmark");
   const [sample, setSample] = useState<string | null>(null);
@@ -94,6 +115,7 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
   const [modelStatus, setModelStatus] = useState("Model ready · PatchCore ResNet-18");
   const [view, setView] = useState("command");
   const fileInput = useRef<HTMLInputElement>(null);
+  const datasetInput = useRef<HTMLInputElement>(null);
   const cameraVideo = useRef<HTMLVideoElement>(null);
   const cameraStream = useRef<MediaStream | null>(null);
   const analyzingRef = useRef(false);
@@ -101,6 +123,8 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
   const registeredRecipes = Object.entries(scenarios) as [ScenarioId, (typeof scenarios)[ScenarioId]][];
   const activePillVariant = pillVariants[pillVariantId];
   const inspectionReady = scenarioId !== "pill" || activePillVariant.status === "active";
+  const inspectionContext = ["command", "live", "review", "intelligence", "trace"].includes(view);
+  const viewTitle = view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "datasets" ? "Dataset manager" : view === "training" ? "Training jobs" : view === "lines" ? "Lines & stations" : view === "registry" ? "Model registry" : "Settings";
 
   const openProduct = (viewName = "command") => {
     setView(viewName);
@@ -265,7 +289,6 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
     setQueuedForTraining(false);
     setInspectionId(null);
     setPersistenceMessage("No inspection has been saved for this recipe yet");
-    setView("live");
     setModelStatus(`Model ready · ${scenarios[next].name} PatchCore`);
   };
 
@@ -320,6 +343,136 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
     }, "image/jpeg", .9);
   };
 
+  const loadOperations = async () => {
+    if (!workspaceUser) return;
+    setOperationsLoading(true);
+    try {
+      const [datasetResponse, snapshotResponse, jobResponse, modelResponse, deploymentResponse] = await Promise.all([
+        fetch("/api/datasets"), fetch("/api/datasets/snapshots"), fetch("/api/training/jobs"), fetch("/api/models"), fetch("/api/deployments"),
+      ]);
+      const responses = [datasetResponse, snapshotResponse, jobResponse, modelResponse, deploymentResponse];
+      const payloads = await Promise.all(responses.map(response => response.json())) as Array<Record<string, unknown>>;
+      const failedIndex = responses.findIndex(response => !response.ok);
+      if (failedIndex >= 0) throw new Error(String(payloads[failedIndex].error ?? "Workspace operations could not be loaded"));
+      const nextDatasets = (payloads[0].datasets ?? []) as DatasetRecord[];
+      const nextSnapshots = (payloads[1].snapshots ?? []) as SnapshotRecord[];
+      setDatasets(nextDatasets); setSnapshots(nextSnapshots);
+      setTrainingJobs((payloads[2].jobs ?? []) as TrainingJobRecord[]);
+      setModels((payloads[3].models ?? []) as ModelRecord[]);
+      setDeployments((payloads[4].deployments ?? []) as DeploymentRecord[]);
+      setSelectedDatasetId(current => current || nextDatasets[0]?.id || "");
+      setSelectedSnapshotId(current => current || nextSnapshots.find(item => item.datasetId === (selectedDatasetId || nextDatasets[0]?.id))?.id || nextSnapshots[0]?.id || "");
+      setOperationsMessage("Persistent workspace records are synchronized");
+    } catch (error) {
+      setOperationsMessage(error instanceof Error ? error.message : "Workspace operations could not be loaded");
+    } finally { setOperationsLoading(false); }
+  };
+
+  const loadDatasetAssets = async (datasetId: string) => {
+    if (!datasetId || !workspaceUser) { setDatasetAssets([]); return; }
+    try {
+      const response = await fetch(`/api/datasets/assets?datasetId=${encodeURIComponent(datasetId)}&limit=250`);
+      const payload = await response.json() as { assets?: DatasetAssetRecord[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Dataset assets could not be loaded");
+      setDatasetAssets(payload.assets ?? []);
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Dataset assets could not be loaded"); }
+  };
+
+  const createDataset = async () => {
+    setOperationsLoading(true);
+    try {
+      const response = await fetch("/api/datasets", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recipeId: `recipe_${scenarioId}`, name: `${activeScenario.name} production collection ${new Date().toISOString().slice(0, 10)}` }) });
+      const payload = await response.json() as { dataset?: DatasetRecord; error?: string };
+      if (!response.ok || !payload.dataset) throw new Error(payload.error ?? "Dataset could not be created");
+      setSelectedDatasetId(payload.dataset.id); setOperationsMessage(`Dataset created · ${payload.dataset.name}`);
+      await loadOperations();
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Dataset could not be created"); }
+    finally { setOperationsLoading(false); }
+  };
+
+  const uploadDatasetFiles = async (files?: FileList | null) => {
+    if (!files?.length || !selectedDatasetId) return;
+    setOperationsLoading(true); setOperationsMessage(`Uploading ${files.length} images with checksum deduplication…`);
+    try {
+      const form = new FormData(); form.append("datasetId", selectedDatasetId);
+      Array.from(files).forEach(file => form.append("files", file));
+      const response = await fetch("/api/datasets/assets", { method: "POST", body: form });
+      const payload = await response.json() as { assets?: Array<{ duplicate: boolean }>; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Dataset upload failed");
+      const created = (payload.assets ?? []).filter(item => !item.duplicate).length;
+      setOperationsMessage(`${created} images stored · ${(payload.assets?.length ?? 0) - created} duplicates skipped`);
+      await Promise.all([loadOperations(), loadDatasetAssets(selectedDatasetId)]);
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Dataset upload failed"); }
+    finally { setOperationsLoading(false); if (datasetInput.current) datasetInput.current.value = ""; }
+  };
+
+  const labelDatasetAsset = async (assetId: string, label: "acceptable" | "anomaly", split: "train" | "test") => {
+    try {
+      const response = await fetch("/api/datasets/assets", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ assetId, label, split }) });
+      const payload = await response.json() as { asset?: DatasetAssetRecord; error?: string };
+      if (!response.ok || !payload.asset) throw new Error(payload.error ?? "Asset could not be labeled");
+      setDatasetAssets(current => current.map(item => item.id === assetId ? payload.asset! : item));
+      setOperationsMessage(`${payload.asset.filename} labeled ${label} / ${split}`);
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Asset could not be labeled"); }
+  };
+
+  const freezeDatasetSnapshot = async () => {
+    if (!selectedDatasetId) return;
+    setOperationsLoading(true);
+    try {
+      const response = await fetch("/api/datasets/snapshots", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ datasetId: selectedDatasetId, name: `Governed snapshot ${new Date().toISOString()}`, minimumImages: 50 }) });
+      const payload = await response.json() as { snapshot?: SnapshotRecord; error?: string };
+      if (!response.ok || !payload.snapshot) throw new Error(payload.error ?? "Snapshot quality gate failed");
+      setSelectedSnapshotId(payload.snapshot.id); setOperationsMessage(`Immutable snapshot v${payload.snapshot.version} created · ${payload.snapshot.imageCount} images`);
+      await loadOperations();
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Snapshot quality gate failed"); }
+    finally { setOperationsLoading(false); }
+  };
+
+  const requestTraining = async () => {
+    if (!selectedSnapshotId) return;
+    setOperationsLoading(true);
+    try {
+      const response = await fetch("/api/training/jobs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ recipeId: `recipe_${scenarioId}`, snapshotId: selectedSnapshotId, config: { architecture: "PatchCore", backbone: "ResNet-18", targetImages: 10000 } }) });
+      const payload = await response.json() as { job?: TrainingJobRecord; message?: string; error?: string };
+      if (!response.ok || !payload.job) throw new Error(payload.error ?? "Training request failed");
+      setOperationsMessage(payload.message ?? "Training job created"); await loadOperations();
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Training request failed"); }
+    finally { setOperationsLoading(false); }
+  };
+
+  const governModel = async (modelId: string, action: "approve" | "reject" | "retire") => {
+    try {
+      const response = await fetch("/api/models", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ modelId, action, comment: "Governance action from QEVRA workspace" }) });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Model action failed");
+      setOperationsMessage(`Model ${action} action saved to the audit trail`); await loadOperations();
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Model action failed"); }
+  };
+
+  const loadCatalog = async () => {
+    if (!workspaceUser) return;
+    try {
+      const response = await fetch("/api/catalog");
+      const payload = await response.json() as { catalog?: CatalogRecord[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Product catalog could not be loaded");
+      setCatalog(payload.catalog ?? []);
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Product catalog could not be loaded"); }
+  };
+
+  const enrollMedicine = async () => {
+    if (!medicineSku.trim() || !medicineVariant.trim()) return;
+    setOperationsLoading(true);
+    try {
+      const response = await fetch("/api/catalog", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sku: medicineSku, variant: medicineVariant }) });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Medicine could not be enrolled");
+      setMedicineSku(""); setMedicineVariant(""); setOperationsMessage("Medicine enrolled with a separate draft inspection recipe");
+      await loadCatalog();
+    } catch (error) { setOperationsMessage(error instanceof Error ? error.message : "Medicine could not be enrolled"); }
+    finally { setOperationsLoading(false); }
+  };
+
   useEffect(() => {
     document.body.style.overflow = demo ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
@@ -344,6 +497,15 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
     }).catch(error => { console.error(error); if (!cancelled) setPersistenceMessage(error instanceof Error ? error.message : "Inspection history is unavailable"); }).finally(() => { if (!cancelled) setHistoryLoading(false); });
     return () => { cancelled = true; };
   }, [view, workspaceUser, scenarioId]);
+
+  useEffect(() => {
+    if (!workspaceUser || !["datasets", "training", "registry", "lines"].includes(view)) return;
+    void loadOperations();
+  }, [view, workspaceUser]);
+
+  useEffect(() => { if (view === "registry" && workspaceUser) void loadCatalog(); }, [view, workspaceUser]);
+
+  useEffect(() => { void loadDatasetAssets(selectedDatasetId); }, [selectedDatasetId, workspaceUser]);
 
   return (
     <main>
@@ -424,11 +586,10 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
       {demo && <div className="demo" role="dialog" aria-modal="true" aria-label="QEVRA AI live inspection workspace">
         <div className="demo-top"><div className="brand"><Mark dark /><b>QEVRA</b><small>AI</small></div><div>{workspaceUser && <span className="account-chip"><b>{workspaceUser.displayName}</b><small>{workspaceUser.email}</small></span>}<span className={live ? "online" : "offline"}>{live ? "● LINE ONLINE" : "● LINE PAUSED"}</span>{workspaceUser && <a className="signout" href="/signout-with-chatgpt?return_to=/">Sign out</a>}<button onClick={() => setDemo(false)} aria-label="Close workspace">×</button></div></div>
         <div className="demo-body">
-          <aside><small>QUALITY WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Recipe registry</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>QE</span><p><b>{activeScenario.name}</b><small>{activeScenario.area} · {inspectionReady ? "recipe active" : "enrollment required"}</small></p></div></aside>
+          <aside><small>QUALITY WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>DATA &amp; MODELS</small><button className={view === "datasets" ? "active" : ""} onClick={() => setView("datasets")}>▥ Dataset manager</button><button className={view === "training" ? "active" : ""} onClick={() => setView("training")}>◫ Training jobs</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Model registry</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>QE</span><p><b>{activeScenario.name}</b><small>{activeScenario.area} · {inspectionReady ? "recipe active" : "enrollment required"}</small></p></div></aside>
           <section className="dash">
-            <div className="dash-head"><div><small>VALIDATED MODEL WORKSPACE · {activeScenario.area.toUpperCase()}</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Recipe registry"}</h2></div><div className="dash-actions"><label className="scenario-selector"><span>Inspection recipe</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut · automotive</option><option value="bottle">Bottle · packaging</option><option value="cable">Cable assembly · electronics</option><option value="pill">Pill family · pharma</option></select></label>{scenarioId === "pill" && <label className="scenario-selector variant-selector"><span>Pill SKU / variant</span><select value={pillVariantId} onChange={e => { const next = e.target.value as PillVariantId; stopCamera(); setPillVariantId(next); setSample(null); setAnalysis(null); setReviewed(false); setOperatorDecision(null); setQueuedForTraining(false); setModelStatus(pillVariants[next].status === "active" ? "Model ready · benchmark pill recipe" : `${pillVariants[next].name} · enrollment required`); }}><option value="benchmark">Benchmark pill family · active</option><option value="tablet_round">Round tablet · enroll</option><option value="capsule">Capsule · enroll</option><option value="blister">Blister pack · enroll</option></select></label>}<input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && inspectionReady && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>{activeScenario.name} test data</a><button data-testid="camera-toggle" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Stop camera" : "Start camera"}</button></>}<button className="inspect-button" disabled={!inspectionReady} onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
-            <div className={`model-note ${inspectionReady ? "" : "scope-alert"}`}><b data-testid="model-status">{modelStatus}</b><span>{inspectionReady ? `Recipe scope: ${activeScenario.name}${scenarioId === "pill" ? ` / ${activePillVariant.name}` : ""} · ${activeScenario.training} acceptable benchmark samples · ${activeScenario.testing} held-out images` : `${activePillVariant.detail}. This product will not be sent through the wrong model.`}</span></div>
-            <div className="recipe-scope"><b>Model routing guard</b><span>This workspace validates only the selected registered recipe. A different product, pill shape, imprint, color, package layout, camera angle, or lighting setup requires its own validated variant. Unknown inputs are enrollment candidates—not confirmed defects.</span></div>
+            <div className="dash-head"><div><small>{inspectionContext ? `VALIDATED MODEL WORKSPACE · ${activeScenario.area.toUpperCase()}` : "GOVERNED QUALITY OPERATIONS"}</small><h2 data-testid="workspace-title">{viewTitle}</h2></div><div className="dash-actions">{inspectionContext && <><label className="scenario-selector"><span>Inspection recipe</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut · automotive</option><option value="bottle">Bottle · packaging</option><option value="cable">Cable assembly · electronics</option><option value="pill">Pill family · pharma</option></select></label>{scenarioId === "pill" && <label className="scenario-selector variant-selector"><span>Pill SKU / variant</span><select value={pillVariantId} onChange={e => { const next = e.target.value as PillVariantId; stopCamera(); setPillVariantId(next); setSample(null); setAnalysis(null); setReviewed(false); setOperatorDecision(null); setQueuedForTraining(false); setModelStatus(pillVariants[next].status === "active" ? "Model ready · benchmark pill recipe" : `${pillVariants[next].name} · enrollment required`); }}><option value="benchmark">Benchmark pill family · active</option><option value="tablet_round">Round tablet · enroll</option><option value="capsule">Capsule · enroll</option><option value="blister">Blister pack · enroll</option></select></label>}</>}<input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && inspectionReady && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>{activeScenario.name} test data</a><button data-testid="camera-toggle" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Stop camera" : "Start camera"}</button></>}{inspectionContext && <button className="inspect-button" disabled={!inspectionReady} onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>}{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
+            {inspectionContext && <><div className={`model-note ${inspectionReady ? "" : "scope-alert"}`}><b data-testid="model-status">{modelStatus}</b><span>{inspectionReady ? `Recipe scope: ${activeScenario.name}${scenarioId === "pill" ? ` / ${activePillVariant.name}` : ""} · ${activeScenario.training} acceptable benchmark samples · ${activeScenario.testing} held-out images` : `${activePillVariant.detail}. This product will not be sent through the wrong model.`}</span></div><div className="recipe-scope"><b>Model routing guard</b><span>This workspace validates only the selected registered recipe. A different product, pill shape, imprint, color, package layout, camera angle, or lighting setup requires its own validated variant. Unknown inputs are enrollment candidates—not confirmed defects.</span></div></>}
             {(view === "command" || view === "intelligence") && <div className="dash-metrics"><article><small>TRAINING IMAGES</small><b>{activeScenario.training}</b><span>Acceptable samples only</span></article><article><small>TEST IMAGES</small><b>{activeScenario.testing}</b><span>Held-out benchmark split</span></article><article><small>IMAGE F1</small><b>{activeScenario.imageF1.toFixed(2)}%</b><span>Measured</span></article><article><small>IMAGE AUROC</small><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><span>Measured</span></article></div>}
             {(view === "command" || view === "live") && <div className="dash-grid">
               <article className="live-panel"><div className="panel-title"><div><span className={live ? "pulse" : "paused"} /> <b>{sample ? "Captured sample · real inference" : `Upload or capture a ${activeScenario.input} image`}</b></div><small>{analyzing ? "ANALYZING…" : "PATCHCORE · ONNX"}</small></div><div className={`camera-console ${cameraActive ? "active" : ""}`}><video ref={cameraVideo} autoPlay muted playsInline aria-label="Live inspection camera preview" /><div><b>{cameraActive ? "LIVE CAMERA · AUTO INSPECTION" : "CAMERA READY"}</b><span>{cameraMessage}</span><p>{cameraActive ? <><button onClick={captureCameraFrame}>Inspect now</button><button className={autoInspect ? "auto-active" : ""} onClick={() => setAutoInspect(!autoInspect)}>{autoInspect ? "Pause auto" : "Resume auto"}</button></> : <button className="start-camera-primary" data-testid="camera-panel-start" onClick={startCamera}>Start camera &amp; inspect continuously</button>}</p></div></div><div className={`feed ${sample ? "sample-feed" : ""}`}>{sample ? <img src={sample} alt="Uploaded manufacturing sample" /> : <button className="upload-empty" onClick={() => fileInput.current?.click()}>Choose an image or start the camera</button>}{analysis && <img className="heatmap" src={analysis.heatmap} alt="Model anomaly heatmap" />}{analysis && <span className="detect-box uploaded-box" style={{ left: `${analysis.x}%`, top: `${analysis.y}%` }}><b>{analysis.finding.toUpperCase()}</b>{analysis.confidence.toFixed(1)}</span>}{analyzing && <div className="analysis-scan" />}<small>{sample ? "REAL PATCHCORE ANOMALY MAP" : "NO SAMPLE SELECTED"}</small></div><div className="feed-result"><div><small>FINAL DISPOSITION</small><b data-testid="model-decision" className={operatorDecision === "acceptable" ? "accepted" : "reject"}>{operatorDecision === "acceptable" ? "ACCEPTED · OVERRIDE" : operatorDecision === "anomaly" ? "REJECT · CONFIRMED" : analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY · REVIEW" : "NORMAL") : "—"}</b></div><div><small>MODEL PREDICTION</small><b>{analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY" : "NORMAL") : "—"}</b></div><div><small>ANOMALY SCORE</small><b data-testid="anomaly-score">{analysis ? analysis.confidence.toFixed(2) : "—"}</b></div><div><small>PROCESSING TIME</small><b>{analysis ? `${analysis.latencyMs.toFixed(0)} ms` : "—"}</b></div></div></article>
@@ -439,9 +600,14 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
             {view === "trace" && <article className="recent"><div className="panel-title"><b>Persistent inspection history</b><small>{historyLoading ? "LOADING…" : `${inspectionHistory.length} SAVED RECORDS`}</small></div><p className="persistence-note">{persistenceMessage}</p><div className="table"><div className="tr trace-row th"><span>TIME</span><span>SOURCE</span><span>MODEL</span><span>FINAL</span><span>SCORE / LATENCY</span></div>{inspectionHistory.map(row => <div className="tr trace-row" key={row.id}><span>{new Date(row.inspectedAt).toLocaleString()}</span><span>{row.source}</span><span className={`status ${row.modelDecision === "normal" ? "pass" : "review"}`}>{row.modelDecision}</span><span className={`status ${row.finalDisposition === "accepted" ? "pass" : row.finalDisposition === "rejected" ? "reject" : "review"}`}>{row.finalDisposition}</span><span>{row.anomalyScore?.toFixed(2) ?? "—"} · {row.latencyMs?.toFixed(0) ?? "—"} ms</span></div>)}{!historyLoading && inspectionHistory.length === 0 && <div className="empty-history">No persistent records yet. Run an authenticated upload or camera inspection.</div>}</div></article>}
             {view === "review" && <div className="workspace-view"><article className="review-work"><div><small>CURRENT REVIEW</small><h3>{operatorDecision === "acceptable" ? "Accepted by operator" : operatorDecision === "anomaly" ? "Anomaly confirmed" : analysis ? analysis.finding : "No inspection awaiting review"}</h3><p>{analysis ? operatorDecision === "acceptable" ? `The operator accepted this item despite the model score of ${analysis.confidence.toFixed(2)}. The original model prediction remains in the audit record.` : operatorDecision === "anomaly" ? `The operator confirmed the model anomaly at score ${analysis.confidence.toFixed(2)}.` : `Model anomaly score: ${analysis.confidence.toFixed(2)}. Confirm whether the highlighted region should be accepted as a true anomaly.` : "Run an image through Live inspection to create a review item."}</p><p className="persistence-note">{persistenceMessage}</p>{sample && <img src={sample} alt="Part awaiting review" />}</div><div className="review-actions"><button disabled={!analysis} onClick={() => void applyReviewDecision("anomaly")}>Confirm anomaly</button><button disabled={!analysis} onClick={() => void applyReviewDecision("acceptable")}>Mark acceptable</button><button disabled={!analysis || operatorDecision !== "acceptable" || queuedForTraining} onClick={() => void applyReviewDecision("retraining")}>Add variant to retraining set</button><span>{queuedForTraining ? "Accepted variant queued for the next governed dataset snapshot. The current model has not been retrained." : reviewed ? "Operator disposition applied to this inspection." : "Human decision pending."}</span></div></article></div>}
             {view === "intelligence" && <div className="workspace-view"><article className="result-card"><h3>{activeScenario.name} held-out evaluation</h3><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><p className="disclaimer">Measured on the MVTec AD {activeScenario.name.toLowerCase()} test split. These results are benchmark evidence, not customer production performance.</p></article></div>}
+            {view === "datasets" && <div className="workspace-view operations-view"><article className="operations-panel"><div className="operations-heading"><div><small>PERSISTENT DATA PIPELINE</small><h3>Production datasets</h3><p>Create a recipe-scoped collection, upload image batches, assign governed labels and splits, then freeze an immutable training snapshot.</p></div><span className={operationsLoading ? "status review" : "status pass"}>{operationsLoading ? "SYNCING" : "CONNECTED"}</span></div><p className="operations-message">{operationsMessage}</p><div className="operations-toolbar"><select aria-label="Selected dataset" value={selectedDatasetId} onChange={event => setSelectedDatasetId(event.target.value)}><option value="">Select a dataset</option>{datasets.map(dataset => <option key={dataset.id} value={dataset.id}>{dataset.name} · {dataset.imageCount} images · {dataset.status}</option>)}</select><button onClick={() => void createDataset()} disabled={operationsLoading}>Create for {activeScenario.name}</button><input ref={datasetInput} hidden type="file" accept="image/jpeg,image/png,image/webp,image/tiff" multiple onChange={event => void uploadDatasetFiles(event.target.files)} /><button onClick={() => datasetInput.current?.click()} disabled={!selectedDatasetId || operationsLoading}>Upload image batch</button><button className="primary-operation" onClick={() => void freezeDatasetSnapshot()} disabled={!selectedDatasetId || operationsLoading}>Run gates &amp; freeze snapshot</button></div><div className="dataset-grid">{datasets.map(dataset => <button key={dataset.id} className={dataset.id === selectedDatasetId ? "selected" : ""} onClick={() => setSelectedDatasetId(dataset.id)}><small>{dataset.status.toUpperCase()}</small><b>{dataset.name}</b><span>{dataset.imageCount.toLocaleString()} images · {(dataset.byteCount / 1048576).toFixed(1)} MB</span><i>{dataset.recipeId.replace("recipe_", "")}</i></button>)}{datasets.length === 0 && <div className="empty-operations">No persistent production dataset exists yet. Benchmark samples are deliberately not presented as customer training data.</div>}</div></article><article className="asset-panel"><div className="panel-title"><b>Labels and train/test assignment</b><small>{datasetAssets.length} MOST RECENT ASSETS</small></div><div className="asset-table"><div className="asset-row asset-head"><span>FILE</span><span>LABEL</span><span>SPLIT</span><span>ACTIONS</span></div>{datasetAssets.map(asset => <div className="asset-row" key={asset.id}><span><b>{asset.filename}</b><small>{(asset.byteSize / 1024).toFixed(0)} KB · {asset.checksum.slice(0, 10)}</small></span><span>{asset.label ?? "Unlabeled"}</span><span>{asset.split}</span><span><button onClick={() => void labelDatasetAsset(asset.id, "acceptable", "train")}>Good → train</button><button onClick={() => void labelDatasetAsset(asset.id, "anomaly", "test")}>Anomaly → test</button></span></div>)}{selectedDatasetId && datasetAssets.length === 0 && <div className="empty-operations">Upload JPEG, PNG, WebP, or TIFF images. Files are checksum-deduplicated before storage.</div>}</div></article></div>}
+            {view === "training" && <div className="workspace-view operations-view"><article className="operations-panel"><div className="operations-heading"><div><small>GOVERNED TRAINING ORCHESTRATION</small><h3>Immutable snapshot → training job</h3><p>Training is permitted only from a frozen dataset snapshot. A configured GPU provider executes the job; QEVRA never reports a local placeholder as completed training.</p></div><span className="status review">PROVIDER GATED</span></div><p className="operations-message">{operationsMessage}</p><div className="operations-toolbar"><select aria-label="Training snapshot" value={selectedSnapshotId} onChange={event => setSelectedSnapshotId(event.target.value)}><option value="">Select immutable snapshot</option>{snapshots.map(snapshot => <option key={snapshot.id} value={snapshot.id}>v{snapshot.version} · {snapshot.name} · {snapshot.imageCount} images</option>)}</select><button className="primary-operation" disabled={!selectedSnapshotId || operationsLoading} onClick={() => void requestTraining()}>Request PatchCore training</button><button onClick={() => void loadOperations()} disabled={operationsLoading}>Refresh status</button></div></article><article className="job-panel"><div className="panel-title"><b>Training job history</b><small>{trainingJobs.length} PERSISTENT JOBS</small></div><div className="job-grid">{trainingJobs.map(job => <div key={job.id}><span className={`status ${job.status === "completed" ? "pass" : job.status === "failed" ? "reject" : "review"}`}>{job.status.replaceAll("_", " ")}</span><b>{job.recipeId.replace("recipe_", "")} · {job.id.slice(0, 8)}</b><small>{new Date(job.createdAt).toLocaleString()} · requested by {job.requestedBy}</small><p>{job.failureMessage ?? (job.providerJobId ? `Provider job ${job.providerJobId}` : "Waiting for TRAINING_API_URL and GPU worker configuration")}</p></div>)}{trainingJobs.length === 0 && <div className="empty-operations">No training job has been requested. Create and freeze a quality-gated snapshot first.</div>}</div></article></div>}
             {view === "lines" && <div className="workspace-view"><article className="station-card"><div><span className={live ? "pulse" : "paused"} /><b>Browser inspection station</b><small>{live ? "Online" : "Paused"}</small></div><dl><dt>Runtime</dt><dd>ONNX Runtime Web / WASM</dd><dt>Model</dt><dd>PatchCore ResNet-18</dd><dt>Input</dt><dd>256 × 256 RGB</dd><dt>Processing</dt><dd>Local in this browser</dd></dl></article></div>}
+            {view === "lines" && <div className="workspace-view"><article className="job-panel"><div className="panel-title"><b>Edge deployment history</b><small>{deployments.length} PROVIDER RECORDS</small></div><div className="job-grid">{deployments.map(deployment => <div key={deployment.id}><span className={`status ${deployment.status === "healthy" ? "pass" : deployment.status === "failed" ? "reject" : "review"}`}>{deployment.status}</span><b>{deployment.stationId} · {deployment.environment}</b><small>Model {deployment.modelId.slice(0, 8)} · {new Date(deployment.createdAt).toLocaleString()}</small><p>Requested by {deployment.deployedBy}</p></div>)}{deployments.length === 0 && <div className="empty-operations">No edge provider deployment exists. Browser inference remains local and is not presented as a PLC/edge rollout.</div>}</div></article></div>}
             {view === "registry" && <div className="workspace-view"><div className="registry-summary"><b>4 real benchmark models</b><span>Metal component · bottle · cable assembly · pill</span></div>{registeredRecipes.map(([id, recipe]) => <article className={`registry-card ${id === scenarioId ? "selected-recipe" : ""}`} key={id}><div className="registry-title"><span>{id === scenarioId ? "SELECTED BENCHMARK MODEL" : "BENCHMARK MODEL"}</span><h3>{recipe.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {recipe.modelSize} ONNX</p></div><dl><dt>Recipe scope</dt><dd>{recipe.area} / {recipe.name}</dd><dt>Training set</dt><dd>{recipe.training} acceptable benchmark images</dd><dt>Validation set</dt><dd>{recipe.testing} held-out images</dd><dt>Image F1</dt><dd>{recipe.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{recipe.pixelF1.toFixed(2)}%</dd><dt>Production status</dt><dd>Not production-trained</dd></dl></article>)}<article className="registry-card data-gate"><div className="registry-title"><span>PRODUCTION DATA GATE</span><h3>No customer production dataset connected</h3><p>A production recipe must represent the real line, product, camera, and operating variation.</p></div><dl><dt>Recommended baseline</dt><dd>500+ accepted images per SKU/variant</dd><dt>Coverage</dt><dd>Multiple shifts, lots, cameras, lighting states, positions, and suppliers</dd><dt>Defect evidence</dt><dd>Quality-approved defect examples and labels</dd><dt>Release gate</dt><dd>Held-out validation against the customer quality plan</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>MULTI-VARIANT DESIGN</span><h3>Pill product family</h3><p>Separate recipes prevent a round tablet, capsule, blister, color, or imprint change from being judged by the wrong model.</p></div><dl><dt>Active benchmark recipe</dt><dd>Benchmark pill family</dd><dt>Enrollment-ready</dt><dd>Round tablet, capsule, blister pack, and customer-defined SKU</dd><dt>Routing key</dt><dd>Manufacturer + product code + dosage + shape + color + imprint + pack layout</dd><dt>Unknown product action</dt><dd>Hold and create enrollment request</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>PLANNED · NOT TRAINED</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>PLANNED · INPUT REQUIRED</span><h3>3D / depth inspection</h3><p>A real 3D model requires the target sensor format and representative good/defective scans.</p></div><dl><dt>Supported design targets</dt><dd>Depth map, PLY/PCD point cloud, or RGB-D frame pair</dd><dt>Status</dt><dd>2D models must not be used as 3D validators</dd><dt>Next decision</dt><dd>Choose camera/sensor and inspection tolerance</dd></dl></article></div>}
-            {view === "settings" && <div className="workspace-view"><article className="settings-card"><h3>Inspection settings</h3><label><span>Decision source</span><select defaultValue="model"><option value="model">Trained model threshold</option></select></label><label><span>Inference device</span><select defaultValue="browser"><option value="browser">Local browser (WASM)</option></select></label><label><span>Heatmap overlay</span><input type="checkbox" defaultChecked /></label><p>Settings are device-local for this proof of concept. Production settings require authenticated, persistent storage.</p></article></div>}
+            {view === "registry" && <div className="workspace-view"><article className="operations-panel"><div className="operations-heading"><div><small>PHARMA PRODUCT CATALOG</small><h3>Enroll up to 100 medicine types</h3><p>Each visually distinct medicine or package receives its own routing identity and draft recipe. Enrollment does not mark a model as trained.</p></div><span className="status review">{catalog.filter(item => item.family === "Pharmaceutical products").length} / 100</span></div><p className="operations-message">{operationsMessage}</p><div className="operations-toolbar"><input aria-label="Medicine SKU" placeholder="Medicine SKU / product code" value={medicineSku} onChange={event => setMedicineSku(event.target.value)} /><input aria-label="Medicine variant" placeholder="Name, dosage, shape or package variant" value={medicineVariant} onChange={event => setMedicineVariant(event.target.value)} /><button className="primary-operation" onClick={() => void enrollMedicine()} disabled={!medicineSku.trim() || !medicineVariant.trim() || operationsLoading}>Enroll medicine</button></div><div className="catalog-table"><div className="asset-row asset-head"><span>MEDICINE / SKU</span><span>PRODUCT</span><span>RECIPE</span><span>ROUTING STATUS</span></div>{catalog.filter(item => item.family === "Pharmaceutical products").map(item => <div className="asset-row" key={item.productId}><span><b>{item.variant}</b><small>{item.sku}</small></span><span>{item.productStatus}</span><span>{item.recipeStatus}</span><span>{item.activeModelId ? "Active model assigned" : "Enrollment / training required"}</span></div>)}</div></article></div>}
+            {view === "registry" && <div className="workspace-view"><article className="job-panel"><div className="panel-title"><b>Governed production model records</b><small>{models.length} PERSISTENT MODELS</small></div><p className="operations-message">{operationsMessage}</p><div className="job-grid">{models.map(model => <div key={model.id}><span className={`status ${model.status === "approved" || model.status === "deployed" ? "pass" : model.status === "rejected" || model.status === "retired" ? "reject" : "review"}`}>{model.status}</span><b>{model.recipeId.replace("recipe_", "")} · v{model.version}</b><small>Created {new Date(model.createdAt).toLocaleString()} {model.approvedBy ? `· approved by ${model.approvedBy}` : ""}</small><p>Training lineage: immutable job and artifact record</p><span className="model-actions">{model.status === "candidate" && <><button onClick={() => void governModel(model.id, "approve")}>Approve</button><button onClick={() => void governModel(model.id, "reject")}>Reject</button></>}{(model.status === "approved" || model.status === "deployed") && <button onClick={() => void governModel(model.id, "retire")}>Retire</button>}</span></div>)}{models.length === 0 && <div className="empty-operations">No production model artifact exists yet. The four bundled benchmark models remain visible above but are not inserted into the production registry.</div>}</div></article></div>}
+            {view === "settings" && <div className="workspace-view"><article className="settings-card"><h3>Inspection settings</h3><label><span>Decision source</span><select defaultValue="model"><option value="model">Validated model threshold</option></select></label><label><span>Inference device</span><select defaultValue="browser"><option value="browser">Local browser (WASM)</option></select></label><label><span>Heatmap overlay</span><input type="checkbox" defaultChecked /></label><label><span>Camera capture</span><select defaultValue="manual"><option value="manual">Off until explicitly started</option></select></label><p>Camera and heatmap preferences are device-local. Dataset, training, inspection, review, model, and deployment records are authenticated and persistent.</p></article></div>}
           </section>
         </div>
       </div>}
