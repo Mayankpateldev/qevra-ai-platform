@@ -18,13 +18,16 @@ npm run build
 
 This starter does not use `wrangler.jsonc`.
 
-## Included Shape
+## Included Production Foundation
 
 - edit site code under `app/`
 - `.openai/hosting.json` declares optional Sites D1 and R2 bindings
 - `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
+- `db/schema.ts` defines tenant-scoped products, recipes, datasets, immutable
+  snapshots, training jobs, models, deployments, inspections, reviews and audits
+- R2 stores original dataset assets and immutable training manifests
+- authenticated APIs persist inspections, operator reviews, dataset labels,
+  snapshots, training requests, model approvals and deployment requests
 - `drizzle.config.ts` supports local migration generation when needed
 
 ## Workspace Auth Headers
@@ -89,7 +92,7 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 
 - `npm run dev`: start local development
 - `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
+- `npm test`: build and verify the QEVRA AI application and protected workspace
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 
 ## Learn More

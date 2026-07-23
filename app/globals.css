@@ -131,3 +131,8 @@ html,body,main{width:100%;max-width:100%;overflow-x:clip}
   .settings-card select,.settings-card input{justify-self:stretch;width:100%}
   footer{height:auto;min-height:100px;gap:12px;flex-wrap:wrap}
 }
+
+.persistence-note{margin:0;padding:10px 16px;border-top:1px solid #e3e6e8;background:#f7fbff;color:#475e72;font-size:9px}
+.empty-history{padding:28px 16px;border-top:1px solid #eee;color:#6a7d8f;font-size:10px}
+.tr.trace-row{grid-template-columns:1.5fr .7fr .8fr .8fr 1fr}
+@media(max-width:680px){.tr.trace-row{grid-template-columns:1.35fr .65fr .75fr}.tr.trace-row span:nth-child(4),.tr.trace-row span:nth-child(5){display:none}}

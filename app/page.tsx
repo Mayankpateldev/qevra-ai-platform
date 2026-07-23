@@ -57,6 +57,17 @@ const pillVariants = {
 } as const;
 type PillVariantId = keyof typeof pillVariants;
 
+type InspectionRecord = {
+  id: string;
+  recipeId: string;
+  source: string;
+  modelDecision: string;
+  finalDisposition: string;
+  anomalyScore: number | null;
+  latencyMs: number | null;
+  inspectedAt: string;
+};
+
 function Mark({ dark = false }: { dark?: boolean }) {
   return <span className={`mark ${dark ? "mark-dark" : ""}`} aria-hidden="true"><i /><i /><i /></span>;
 }
@@ -67,6 +78,10 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
   const [reviewed, setReviewed] = useState(false);
   const [operatorDecision, setOperatorDecision] = useState<"acceptable" | "anomaly" | null>(null);
   const [queuedForTraining, setQueuedForTraining] = useState(false);
+  const [inspectionId, setInspectionId] = useState<string | null>(null);
+  const [persistenceMessage, setPersistenceMessage] = useState("No inspection has been saved yet");
+  const [inspectionHistory, setInspectionHistory] = useState<InspectionRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [scenarioId, setScenarioId] = useState<ScenarioId>("metal_nut");
   const [pillVariantId, setPillVariantId] = useState<PillVariantId>("benchmark");
   const [sample, setSample] = useState<string | null>(null);
@@ -93,6 +108,57 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
     else window.location.href = "/workspace";
   };
 
+  const persistInspection = async (result: { confidence: number; finding: string; x: number; y: number; affected: number; latencyMs: number }, file: File, groundTruth?: string) => {
+    if (!workspaceUser) return;
+    setPersistenceMessage("Saving inspection record…");
+    try {
+      const source = groundTruth ? "benchmark" : file.name.startsWith("camera-") ? "camera" : "upload";
+      const response = await fetch("/api/inspections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          recipeId: `recipe_${scenarioId}`,
+          source,
+          modelDecision: result.finding.startsWith("Anomaly") ? "anomaly" : "normal",
+          anomalyScore: result.confidence,
+          latencyMs: result.latencyMs,
+          metadata: { filename: file.name, groundTruth: groundTruth ?? null, peak: { x: result.x, y: result.y }, affectedPercent: result.affected, benchmarkModel: true },
+        }),
+      });
+      const payload = await response.json() as { inspection?: InspectionRecord; error?: string };
+      if (!response.ok || !payload.inspection) throw new Error(payload.error ?? "Inspection could not be saved");
+      setInspectionId(payload.inspection.id);
+      setPersistenceMessage(`Saved inspection ${payload.inspection.id.slice(0, 8)} · audit event recorded`);
+      setInspectionHistory(current => [payload.inspection!, ...current.filter(item => item.id !== payload.inspection!.id)].slice(0, 100));
+    } catch (error) {
+      console.error(error);
+      setInspectionId(null);
+      setPersistenceMessage(error instanceof Error ? `Not saved · ${error.message}` : "Inspection could not be saved");
+    }
+  };
+
+  const applyReviewDecision = async (decision: "acceptable" | "anomaly" | "retraining") => {
+    if (!analysis) return;
+    if (decision === "retraining") setQueuedForTraining(true);
+    else { setReviewed(true); setOperatorDecision(decision); }
+    if (!workspaceUser || !inspectionId) {
+      setPersistenceMessage("Decision applied locally · no persistent inspection record is available");
+      return;
+    }
+    setPersistenceMessage("Saving operator decision…");
+    try {
+      const disposition = decision === "acceptable" ? "accepted" : decision === "anomaly" ? "rejected" : "retraining_candidate";
+      const response = await fetch("/api/reviews", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ inspectionId, disposition, comment: decision === "retraining" ? "Accepted variant selected for a future governed training snapshot" : "Operator disposition from inspection workspace" }) });
+      const payload = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Decision could not be saved");
+      setPersistenceMessage(`Decision saved · ${disposition.replace("_", " ")} · audit event recorded`);
+      setInspectionHistory(current => current.map(item => item.id === inspectionId ? { ...item, finalDisposition: disposition === "accepted" ? "accepted" : disposition === "rejected" ? "rejected" : item.finalDisposition } : item));
+    } catch (error) {
+      console.error(error);
+      setPersistenceMessage(error instanceof Error ? `Decision not saved · ${error.message}` : "Decision could not be saved");
+    }
+  };
+
   const inspectSample = (file?: File, groundTruth?: string) => {
     if (!file || !file.type.startsWith("image/")) return;
     if (!inspectionReady) {
@@ -104,6 +170,8 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
     setReviewed(false);
     setOperatorDecision(null);
     setQueuedForTraining(false);
+    setInspectionId(null);
+    setPersistenceMessage(workspaceUser ? "Inspection running · record will be saved when complete" : "Sign in to save inspections and decisions");
     const url = URL.createObjectURL(file);
     setSample(url); setAnalysis(null); setAnalyzing(true); analyzingRef.current = true; setDemo(true);
     const image = new Image();
@@ -155,7 +223,9 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
         let affectedPixels = 0;
         for (let i = 0; i < map.length; i++) { const a = Math.max(0, Math.min(210, ((map[i] - min) / spread - .35) * 320)); heatPixels.data[i * 4] = 255; heatPixels.data[i * 4 + 1] = 76; heatPixels.data[i * 4 + 2] = 18; heatPixels.data[i * 4 + 3] = a; if (map[i] >= activeScenario.pixelThreshold) affectedPixels++; }
         heatCtx.putImageData(heatPixels, 0, 0);
-        setAnalysis({ confidence: score * 100, finding: label ? "Anomaly detected" : "No anomaly detected", x: (maxIndex % size) / size * 100, y: Math.floor(maxIndex / size) / size * 100, heatmap: heat.toDataURL(), affected: affectedPixels / map.length * 100, latencyMs: performance.now() - inspectionStarted });
+        const completedAnalysis = { confidence: score * 100, finding: label ? "Anomaly detected" : "No anomaly detected", x: (maxIndex % size) / size * 100, y: Math.floor(maxIndex / size) / size * 100, heatmap: heat.toDataURL(), affected: affectedPixels / map.length * 100, latencyMs: performance.now() - inspectionStarted };
+        setAnalysis(completedAnalysis);
+        void persistInspection(completedAnalysis, file, groundTruth);
         setModelStatus("Real model complete · local inference");
       } catch (error) {
         console.error(error); setModelStatus("Model failed to load · retry upload");
@@ -193,6 +263,8 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
     setReviewed(false);
     setOperatorDecision(null);
     setQueuedForTraining(false);
+    setInspectionId(null);
+    setPersistenceMessage("No inspection has been saved for this recipe yet");
     setView("live");
     setModelStatus(`Model ready · ${scenarios[next].name} PatchCore`);
   };
@@ -260,6 +332,18 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
   }, [cameraActive, autoInspect, scenarioId]);
 
   useEffect(() => () => cameraStream.current?.getTracks().forEach(track => track.stop()), []);
+
+  useEffect(() => {
+    if (view !== "trace" || !workspaceUser) return;
+    let cancelled = false;
+    setHistoryLoading(true);
+    fetch(`/api/inspections?recipeId=recipe_${scenarioId}&limit=100`).then(async response => {
+      const payload = await response.json() as { inspections?: InspectionRecord[]; error?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Inspection history is unavailable");
+      if (!cancelled) setInspectionHistory(payload.inspections ?? []);
+    }).catch(error => { console.error(error); if (!cancelled) setPersistenceMessage(error instanceof Error ? error.message : "Inspection history is unavailable"); }).finally(() => { if (!cancelled) setHistoryLoading(false); });
+    return () => { cancelled = true; };
+  }, [view, workspaceUser, scenarioId]);
 
   return (
     <main>
@@ -351,8 +435,9 @@ export default function Home({ initialDemo = false, workspaceUser = null }: { in
               <article className="trend"><div className="panel-title"><b>Held-out benchmark</b><small>MEASURED</small></div><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><div className="trend-foot"><small>STATUS</small><b>Validated</b><span>{activeScenario.testing} images</span></div></article>
             </div>}
             {view === "live" && analysis && <article className="explanation-card" data-testid="result-explanation"><div><small>WHAT WAS CHECKED</small><h3>{activeScenario.name} visual consistency</h3><ul>{activeScenario.checks.map(check => <li key={check}>{check}</li>)}</ul></div><div><small>WHAT THE MODEL FOUND</small><dl><dt>Decision</dt><dd>{analysis.finding.startsWith("Anomaly") ? "Anomaly — review required" : "Normal — within learned range"}</dd><dt>Model anomaly score</dt><dd>{analysis.confidence.toFixed(2)}</dd><dt>Peak location</dt><dd>X {analysis.x.toFixed(1)}% · Y {analysis.y.toFixed(1)}%</dd><dt>Highlighted area</dt><dd>{analysis.affected.toFixed(2)}% of image</dd></dl></div><div><small>INTERPRETATION</small><p>{knownTruth ? <><b>Known benchmark label:</b> {knownTruth}. This label comes from the test dataset, not from the model.</> : "The model detected and localized visual deviation. An operator must confirm the exact defect type and root cause."}</p><p className="guidance"><b>Recommended action:</b> {analysis.finding.startsWith("Anomaly") ? "Hold the item and send it to Review queue." : "Accept for this validated recipe, subject to the production quality plan."}</p></div></article>}
-            {(view === "command" || view === "trace") && <article className="recent"><div className="panel-title"><b>Benchmark test composition</b><small>{activeScenario.testing} TRACEABLE RECORDS</small></div><div className="table"><div className="tr th"><span>GROUND TRUTH</span><span>SAMPLES</span><span>EXPECTED</span><span>CLASS</span><span>DEFECT TYPE</span></div>{activeScenario.groups.map(row => <div className="tr" key={row.id}><b>{row.id}</b><span>{row.time}</span><span className={`status ${row.status.toLowerCase()}`}>{row.status}</span><span>{row.confidence}</span><span>{row.issue}</span></div>)}</div></article>}
-            {view === "review" && <div className="workspace-view"><article className="review-work"><div><small>CURRENT REVIEW</small><h3>{operatorDecision === "acceptable" ? "Accepted by operator" : operatorDecision === "anomaly" ? "Anomaly confirmed" : analysis ? analysis.finding : "No inspection awaiting review"}</h3><p>{analysis ? operatorDecision === "acceptable" ? `The operator accepted this item despite the model score of ${analysis.confidence.toFixed(2)}. The original model prediction remains in the audit record.` : operatorDecision === "anomaly" ? `The operator confirmed the model anomaly at score ${analysis.confidence.toFixed(2)}.` : `Model anomaly score: ${analysis.confidence.toFixed(2)}. Confirm whether the highlighted region should be accepted as a true anomaly.` : "Run an image through Live inspection to create a review item."}</p>{sample && <img src={sample} alt="Part awaiting review" />}</div><div className="review-actions"><button disabled={!analysis} onClick={() => { setReviewed(true); setOperatorDecision("anomaly"); }}>Confirm anomaly</button><button disabled={!analysis} onClick={() => { setReviewed(true); setOperatorDecision("acceptable"); }}>Mark acceptable</button><button disabled={!analysis || operatorDecision !== "acceptable" || queuedForTraining} onClick={() => setQueuedForTraining(true)}>Add variant to retraining set</button><span>{queuedForTraining ? "Accepted variant queued for the next model version. The current model has not been retrained." : reviewed ? "Operator disposition applied to this inspection." : "Human decision pending."}</span></div></article></div>}
+            {view === "command" && <article className="recent"><div className="panel-title"><b>Benchmark test composition</b><small>{activeScenario.testing} TRACEABLE RECORDS</small></div><div className="table"><div className="tr th"><span>GROUND TRUTH</span><span>SAMPLES</span><span>EXPECTED</span><span>CLASS</span><span>DEFECT TYPE</span></div>{activeScenario.groups.map(row => <div className="tr" key={row.id}><b>{row.id}</b><span>{row.time}</span><span className={`status ${row.status.toLowerCase()}`}>{row.status}</span><span>{row.confidence}</span><span>{row.issue}</span></div>)}</div></article>}
+            {view === "trace" && <article className="recent"><div className="panel-title"><b>Persistent inspection history</b><small>{historyLoading ? "LOADING…" : `${inspectionHistory.length} SAVED RECORDS`}</small></div><p className="persistence-note">{persistenceMessage}</p><div className="table"><div className="tr trace-row th"><span>TIME</span><span>SOURCE</span><span>MODEL</span><span>FINAL</span><span>SCORE / LATENCY</span></div>{inspectionHistory.map(row => <div className="tr trace-row" key={row.id}><span>{new Date(row.inspectedAt).toLocaleString()}</span><span>{row.source}</span><span className={`status ${row.modelDecision === "normal" ? "pass" : "review"}`}>{row.modelDecision}</span><span className={`status ${row.finalDisposition === "accepted" ? "pass" : row.finalDisposition === "rejected" ? "reject" : "review"}`}>{row.finalDisposition}</span><span>{row.anomalyScore?.toFixed(2) ?? "—"} · {row.latencyMs?.toFixed(0) ?? "—"} ms</span></div>)}{!historyLoading && inspectionHistory.length === 0 && <div className="empty-history">No persistent records yet. Run an authenticated upload or camera inspection.</div>}</div></article>}
+            {view === "review" && <div className="workspace-view"><article className="review-work"><div><small>CURRENT REVIEW</small><h3>{operatorDecision === "acceptable" ? "Accepted by operator" : operatorDecision === "anomaly" ? "Anomaly confirmed" : analysis ? analysis.finding : "No inspection awaiting review"}</h3><p>{analysis ? operatorDecision === "acceptable" ? `The operator accepted this item despite the model score of ${analysis.confidence.toFixed(2)}. The original model prediction remains in the audit record.` : operatorDecision === "anomaly" ? `The operator confirmed the model anomaly at score ${analysis.confidence.toFixed(2)}.` : `Model anomaly score: ${analysis.confidence.toFixed(2)}. Confirm whether the highlighted region should be accepted as a true anomaly.` : "Run an image through Live inspection to create a review item."}</p><p className="persistence-note">{persistenceMessage}</p>{sample && <img src={sample} alt="Part awaiting review" />}</div><div className="review-actions"><button disabled={!analysis} onClick={() => void applyReviewDecision("anomaly")}>Confirm anomaly</button><button disabled={!analysis} onClick={() => void applyReviewDecision("acceptable")}>Mark acceptable</button><button disabled={!analysis || operatorDecision !== "acceptable" || queuedForTraining} onClick={() => void applyReviewDecision("retraining")}>Add variant to retraining set</button><span>{queuedForTraining ? "Accepted variant queued for the next governed dataset snapshot. The current model has not been retrained." : reviewed ? "Operator disposition applied to this inspection." : "Human decision pending."}</span></div></article></div>}
             {view === "intelligence" && <div className="workspace-view"><article className="result-card"><h3>{activeScenario.name} held-out evaluation</h3><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><p className="disclaimer">Measured on the MVTec AD {activeScenario.name.toLowerCase()} test split. These results are benchmark evidence, not customer production performance.</p></article></div>}
             {view === "lines" && <div className="workspace-view"><article className="station-card"><div><span className={live ? "pulse" : "paused"} /><b>Browser inspection station</b><small>{live ? "Online" : "Paused"}</small></div><dl><dt>Runtime</dt><dd>ONNX Runtime Web / WASM</dd><dt>Model</dt><dd>PatchCore ResNet-18</dd><dt>Input</dt><dd>256 × 256 RGB</dd><dt>Processing</dt><dd>Local in this browser</dd></dl></article></div>}
             {view === "registry" && <div className="workspace-view"><div className="registry-summary"><b>4 real benchmark models</b><span>Metal component · bottle · cable assembly · pill</span></div>{registeredRecipes.map(([id, recipe]) => <article className={`registry-card ${id === scenarioId ? "selected-recipe" : ""}`} key={id}><div className="registry-title"><span>{id === scenarioId ? "SELECTED BENCHMARK MODEL" : "BENCHMARK MODEL"}</span><h3>{recipe.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {recipe.modelSize} ONNX</p></div><dl><dt>Recipe scope</dt><dd>{recipe.area} / {recipe.name}</dd><dt>Training set</dt><dd>{recipe.training} acceptable benchmark images</dd><dt>Validation set</dt><dd>{recipe.testing} held-out images</dd><dt>Image F1</dt><dd>{recipe.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{recipe.pixelF1.toFixed(2)}%</dd><dt>Production status</dt><dd>Not production-trained</dd></dl></article>)}<article className="registry-card data-gate"><div className="registry-title"><span>PRODUCTION DATA GATE</span><h3>No customer production dataset connected</h3><p>A production recipe must represent the real line, product, camera, and operating variation.</p></div><dl><dt>Recommended baseline</dt><dd>500+ accepted images per SKU/variant</dd><dt>Coverage</dt><dd>Multiple shifts, lots, cameras, lighting states, positions, and suppliers</dd><dt>Defect evidence</dt><dd>Quality-approved defect examples and labels</dd><dt>Release gate</dt><dd>Held-out validation against the customer quality plan</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>MULTI-VARIANT DESIGN</span><h3>Pill product family</h3><p>Separate recipes prevent a round tablet, capsule, blister, color, or imprint change from being judged by the wrong model.</p></div><dl><dt>Active benchmark recipe</dt><dd>Benchmark pill family</dd><dt>Enrollment-ready</dt><dd>Round tablet, capsule, blister pack, and customer-defined SKU</dd><dt>Routing key</dt><dd>Manufacturer + product code + dosage + shape + color + imprint + pack layout</dd><dt>Unknown product action</dt><dd>Hold and create enrollment request</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>PLANNED · NOT TRAINED</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>PLANNED · INPUT REQUIRED</span><h3>3D / depth inspection</h3><p>A real 3D model requires the target sensor format and representative good/defective scans.</p></div><dl><dt>Supported design targets</dt><dd>Depth map, PLY/PCD point cloud, or RGB-D frame pair</dd><dt>Status</dt><dd>2D models must not be used as 3D validators</dd><dt>Next decision</dt><dd>Choose camera/sensor and inspection tolerance</dd></dl></article></div>}

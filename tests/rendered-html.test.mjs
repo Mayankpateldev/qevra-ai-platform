@@ -62,3 +62,11 @@ test("ships every real inference asset used by the scenario selector", async () 
     "pill-test-data.zip",
   ].map(file => access(new URL(`public/samples/${file}`, projectRoot))));
 });
+
+test("protects production write and history APIs", async () => {
+  for (const path of ["/api/inspections", "/api/reviews", "/api/datasets/snapshots", "/api/models", "/api/deployments"]) {
+    const response = await render(path);
+    assert.equal(response.status, 401, `${path} must reject anonymous access`);
+    assert.deepEqual(await response.json(), { error: "Authentication required" });
+  }
+});

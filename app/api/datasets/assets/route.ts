@@ -39,3 +39,28 @@ export async function POST(request: Request) {
     return Response.json({ assets: uploaded }, { status: 201 });
   } catch (error) { return platformErrorResponse(error); }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const user = await requirePlatformUser(["admin", "ml_engineer", "quality_engineer"]);
+    const payload = await request.json() as { assetId?: string; label?: string; split?: string; metadata?: Record<string, unknown> };
+    const assetId = payload.assetId?.trim() ?? "";
+    const label = payload.label?.trim().slice(0, 120) ?? "";
+    const split = payload.split;
+    if (!assetId || !label || !["unassigned", "train", "dev", "test"].includes(String(split))) {
+      return Response.json({ error: "assetId, label, and a valid split are required" }, { status: 400 });
+    }
+    const db = getDb();
+    const [asset] = await db.select().from(datasetAssets).where(and(eq(datasetAssets.id, assetId), eq(datasetAssets.organizationId, user.organizationId))).limit(1);
+    if (!asset) return Response.json({ error: "Dataset asset not found" }, { status: 404 });
+    const [dataset] = await db.select({ status: datasets.status }).from(datasets).where(and(eq(datasets.id, asset.datasetId), eq(datasets.organizationId, user.organizationId))).limit(1);
+    if (!dataset || dataset.status === "frozen" || dataset.status === "archived") return Response.json({ error: "Frozen or archived datasets cannot be modified" }, { status: 409 });
+    const metadataJson = JSON.stringify({ ...JSON.parse(asset.metadataJson || "{}"), ...(payload.metadata ?? {}), labeledBy: user.email });
+    await db.batch([
+      db.update(datasetAssets).set({ label, split: split as "unassigned" | "train" | "dev" | "test", metadataJson }).where(and(eq(datasetAssets.id, assetId), eq(datasetAssets.organizationId, user.organizationId))),
+      db.update(datasets).set({ status: "labeling", updatedAt: new Date().toISOString() }).where(and(eq(datasets.id, asset.datasetId), eq(datasets.organizationId, user.organizationId))),
+      db.insert(auditEvents).values({ id: crypto.randomUUID(), organizationId: user.organizationId, actorEmail: user.email, action: "dataset.asset_labeled", entityType: "dataset_asset", entityId: assetId, detailJson: JSON.stringify({ datasetId: asset.datasetId, label, split }) }),
+    ]);
+    return Response.json({ asset: { ...asset, label, split, metadataJson } });
+  } catch (error) { return platformErrorResponse(error); }
+}
