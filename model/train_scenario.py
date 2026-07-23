@@ -17,7 +17,7 @@ WORK_ROOT = Path("/private/tmp/forgesight-model-work")
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("category", choices=["bottle", "cable", "pill"])
+    parser.add_argument("category", choices=["bottle", "cable", "pill", "hazelnut"])
     args = parser.parse_args()
 
     output = WORK_ROOT / "scenarios" / args.category
