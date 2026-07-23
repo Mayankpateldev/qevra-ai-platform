@@ -62,16 +62,22 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<{ confidence: number; finding: string; x: number; y: number; heatmap: string; affected: number } | null>(null);
   const [knownTruth, setKnownTruth] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
+  const [autoInspect, setAutoInspect] = useState(false);
+  const [cameraMessage, setCameraMessage] = useState("Camera is off · video permission is requested only when started");
   const [modelStatus, setModelStatus] = useState("Model ready · PatchCore ResNet-18");
   const [view, setView] = useState("command");
   const fileInput = useRef<HTMLInputElement>(null);
+  const cameraVideo = useRef<HTMLVideoElement>(null);
+  const cameraStream = useRef<MediaStream | null>(null);
+  const analyzingRef = useRef(false);
   const activeScenario = scenarios[scenarioId];
 
   const inspectSample = (file?: File, groundTruth?: string) => {
     if (!file || !file.type.startsWith("image/")) return;
     setKnownTruth(groundTruth ?? null);
     const url = URL.createObjectURL(file);
-    setSample(url); setAnalysis(null); setAnalyzing(true); setDemo(true);
+    setSample(url); setAnalysis(null); setAnalyzing(true); analyzingRef.current = true; setDemo(true);
     const image = new Image();
     image.onload = async () => {
       const canvas = document.createElement("canvas");
@@ -124,7 +130,7 @@ export default function Home() {
         setModelStatus("Real model complete · local inference");
       } catch (error) {
         console.error(error); setModelStatus("Model failed to load · retry upload");
-      } finally { setAnalyzing(false); }
+      } finally { setAnalyzing(false); analyzingRef.current = false; }
     };
     image.src = url;
   };
@@ -154,10 +160,63 @@ export default function Home() {
     setModelStatus(`Model ready · ${scenarios[next].name} PatchCore`);
   };
 
+  const stopCamera = () => {
+    cameraStream.current?.getTracks().forEach(track => track.stop());
+    cameraStream.current = null;
+    if (cameraVideo.current) cameraVideo.current.srcObject = null;
+    setCameraActive(false);
+    setAutoInspect(false);
+    setCameraMessage("Camera stopped · no video is being captured");
+  };
+
+  const startCamera = async () => {
+    setView("live");
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraMessage("This browser does not expose camera capture");
+      return;
+    }
+    try {
+      setCameraMessage("Waiting for video-only camera permission…");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      cameraStream.current = stream;
+      if (cameraVideo.current) { cameraVideo.current.srcObject = stream; await cameraVideo.current.play(); }
+      setCameraActive(true);
+      setCameraMessage("Camera connected · frames remain in this browser");
+    } catch {
+      setCameraMessage("Camera permission was denied or no camera is available");
+      setCameraActive(false);
+    }
+  };
+
+  const captureCameraFrame = () => {
+    const video = cameraVideo.current;
+    if (!video || video.readyState < 2 || analyzingRef.current) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      if (blob) inspectSample(new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" }));
+    }, "image/jpeg", .9);
+  };
+
   useEffect(() => {
     document.body.style.overflow = demo ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [demo]);
+
+  useEffect(() => {
+    if (!cameraActive || !autoInspect) return;
+    const timer = window.setInterval(captureCameraFrame, 1500);
+    return () => window.clearInterval(timer);
+  }, [cameraActive, autoInspect, scenarioId]);
+
+  useEffect(() => () => cameraStream.current?.getTracks().forEach(track => track.stop()), []);
 
   return (
     <main>
@@ -240,11 +299,11 @@ export default function Home() {
         <div className="demo-body">
           <aside><small>WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Model registry</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>FS</span><p><b>{activeScenario.name}</b><small>{activeScenario.area} · validated</small></p></div></aside>
           <section className="dash">
-            <div className="dash-head"><div><small>REAL MODEL POC · {activeScenario.name.toUpperCase()}</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Model registry"}</h2></div><div className="dash-actions"><label className="scenario-selector"><span>Scenario</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut</option><option value="bottle">Bottle packaging</option><option value="cable">Cable assembly</option><option value="pill">Pill inspection</option></select></label><input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>Download test data</a></>}<button className="inspect-button" onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
+            <div className="dash-head"><div><small>REAL MODEL POC · {activeScenario.name.toUpperCase()}</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Model registry"}</h2></div><div className="dash-actions"><label className="scenario-selector"><span>Scenario</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut</option><option value="bottle">Bottle packaging</option><option value="cable">Cable assembly</option><option value="pill">Pill inspection</option></select></label><input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>{activeScenario.name} test data</a><button data-testid="camera-toggle" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Stop camera" : "Start camera"}</button></>}<button className="inspect-button" onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
             <div className="model-note"><b data-testid="model-status">{modelStatus}</b><span>Trained on {activeScenario.training} acceptable samples · evaluated on {activeScenario.testing} unseen images · CC BY-NC-SA benchmark only</span></div>
             {(view === "command" || view === "intelligence") && <div className="dash-metrics"><article><small>TRAINING IMAGES</small><b>{activeScenario.training}</b><span>Acceptable samples only</span></article><article><small>TEST IMAGES</small><b>{activeScenario.testing}</b><span>Held-out benchmark split</span></article><article><small>IMAGE F1</small><b>{activeScenario.imageF1.toFixed(2)}%</b><span>Measured</span></article><article><small>IMAGE AUROC</small><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><span>Measured</span></article></div>}
             {(view === "command" || view === "live") && <div className="dash-grid">
-              <article className="live-panel"><div className="panel-title"><div><span className={live ? "pulse" : "paused"} /> <b>{sample ? "Uploaded sample · real inference" : `Upload a ${activeScenario.input} image`}</b></div><small>{analyzing ? "ANALYZING…" : "PATCHCORE · ONNX"}</small></div><div className={`feed ${sample ? "sample-feed" : ""}`}>{sample ? <img src={sample} alt="Uploaded manufacturing sample" /> : <button className="upload-empty" onClick={() => fileInput.current?.click()}>Choose an image to run the model</button>}{analysis && <img className="heatmap" src={analysis.heatmap} alt="Model anomaly heatmap" />}{analysis && <span className="detect-box uploaded-box" style={{ left: `${analysis.x}%`, top: `${analysis.y}%` }}><b>{analysis.finding.toUpperCase()}</b>{analysis.confidence.toFixed(1)}</span>}{analyzing && <div className="analysis-scan" />}<small>{sample ? "REAL PATCHCORE ANOMALY MAP" : "NO SAMPLE SELECTED"}</small></div><div className="feed-result"><div><small>DECISION</small><b data-testid="model-decision" className="reject">{analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY" : "NORMAL") : "—"}</b></div><div><small>MODEL</small><b>{activeScenario.name} / R18</b></div><div><small>ANOMALY SCORE</small><b data-testid="anomaly-score">{analysis ? analysis.confidence.toFixed(2) : "—"}</b></div></div></article>
+              <article className="live-panel"><div className="panel-title"><div><span className={live ? "pulse" : "paused"} /> <b>{sample ? "Captured sample · real inference" : `Upload or capture a ${activeScenario.input} image`}</b></div><small>{analyzing ? "ANALYZING…" : "PATCHCORE · ONNX"}</small></div><div className={`camera-console ${cameraActive ? "active" : ""}`}><video ref={cameraVideo} autoPlay muted playsInline aria-label="Live inspection camera preview" /><div><b>{cameraActive ? "LIVE CAMERA" : "CAMERA READY"}</b><span>{cameraMessage}</span>{cameraActive && <p><button onClick={captureCameraFrame}>Capture &amp; inspect</button><button className={autoInspect ? "auto-active" : ""} onClick={() => setAutoInspect(!autoInspect)}>{autoInspect ? "Stop auto" : "Auto · 1.5s"}</button></p>}</div></div><div className={`feed ${sample ? "sample-feed" : ""}`}>{sample ? <img src={sample} alt="Uploaded manufacturing sample" /> : <button className="upload-empty" onClick={() => fileInput.current?.click()}>Choose an image or start the camera</button>}{analysis && <img className="heatmap" src={analysis.heatmap} alt="Model anomaly heatmap" />}{analysis && <span className="detect-box uploaded-box" style={{ left: `${analysis.x}%`, top: `${analysis.y}%` }}><b>{analysis.finding.toUpperCase()}</b>{analysis.confidence.toFixed(1)}</span>}{analyzing && <div className="analysis-scan" />}<small>{sample ? "REAL PATCHCORE ANOMALY MAP" : "NO SAMPLE SELECTED"}</small></div><div className="feed-result"><div><small>DECISION</small><b data-testid="model-decision" className="reject">{analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY" : "NORMAL") : "—"}</b></div><div><small>MODEL</small><b>{activeScenario.name} / R18</b></div><div><small>ANOMALY SCORE</small><b data-testid="anomaly-score">{analysis ? analysis.confidence.toFixed(2) : "—"}</b></div></div></article>
               <article className="trend"><div className="panel-title"><b>Held-out benchmark</b><small>MEASURED</small></div><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><div className="trend-foot"><small>STATUS</small><b>Validated</b><span>{activeScenario.testing} images</span></div></article>
             </div>}
             {view === "live" && analysis && <article className="explanation-card" data-testid="result-explanation"><div><small>WHAT WAS CHECKED</small><h3>{activeScenario.name} visual consistency</h3><ul>{activeScenario.checks.map(check => <li key={check}>{check}</li>)}</ul></div><div><small>WHAT THE MODEL FOUND</small><dl><dt>Decision</dt><dd>{analysis.finding.startsWith("Anomaly") ? "Anomaly — review required" : "Normal — within learned range"}</dd><dt>Model anomaly score</dt><dd>{analysis.confidence.toFixed(2)}</dd><dt>Peak location</dt><dd>X {analysis.x.toFixed(1)}% · Y {analysis.y.toFixed(1)}%</dd><dt>Highlighted area</dt><dd>{analysis.affected.toFixed(2)}% of image</dd></dl></div><div><small>INTERPRETATION</small><p>{knownTruth ? <><b>Known benchmark label:</b> {knownTruth}. This label comes from the test dataset, not from the model.</> : "The model detected and localized visual deviation. An operator must confirm the exact defect type and root cause."}</p><p className="guidance"><b>Recommended action:</b> {analysis.finding.startsWith("Anomaly") ? "Hold the item and send it to Review queue." : "Accept for this POC, subject to the production quality plan."}</p></div></article>}
@@ -252,7 +311,7 @@ export default function Home() {
             {view === "review" && <div className="workspace-view"><article className="review-work"><div><small>CURRENT REVIEW</small><h3>{analysis ? analysis.finding : "No inspection awaiting review"}</h3><p>{analysis ? `Model anomaly score: ${analysis.confidence.toFixed(2)}. Confirm whether the highlighted region should be accepted as a true anomaly.` : "Run an image through Live inspection to create a review item."}</p>{sample && <img src={sample} alt="Part awaiting review" />}</div><div className="review-actions"><button disabled={!analysis} onClick={() => setReviewed(true)}>Confirm anomaly</button><button disabled={!analysis} onClick={() => setReviewed(true)}>Mark acceptable</button><span>{reviewed ? "Decision saved to this session." : "Human decision pending."}</span></div></article></div>}
             {view === "intelligence" && <div className="workspace-view"><article className="result-card"><h3>{activeScenario.name} held-out evaluation</h3><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><p className="disclaimer">Measured on the MVTec AD {activeScenario.name.toLowerCase()} test split. These results are benchmark evidence, not customer production performance.</p></article></div>}
             {view === "lines" && <div className="workspace-view"><article className="station-card"><div><span className={live ? "pulse" : "paused"} /><b>POC browser station</b><small>{live ? "Online" : "Paused"}</small></div><dl><dt>Runtime</dt><dd>ONNX Runtime Web / WASM</dd><dt>Model</dt><dd>PatchCore ResNet-18</dd><dt>Input</dt><dd>256 × 256 RGB</dd><dt>Processing</dt><dd>Local in this browser</dd></dl></article></div>}
-            {view === "registry" && <div className="workspace-view"><article className="registry-card"><div className="registry-title"><span>ACTIVE</span><h3>{activeScenario.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {activeScenario.modelSize} ONNX</p></div><dl><dt>Training set</dt><dd>{activeScenario.training} good images</dd><dt>Validation set</dt><dd>{activeScenario.testing} held-out images</dd><dt>Image F1</dt><dd>{activeScenario.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{activeScenario.pixelF1.toFixed(2)}%</dd><dt>License constraint</dt><dd>Non-commercial benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>DATASET PREPARATION</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Not yet trained — unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article></div>}
+            {view === "registry" && <div className="workspace-view"><article className="registry-card"><div className="registry-title"><span>ACTIVE</span><h3>{activeScenario.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {activeScenario.modelSize} ONNX</p></div><dl><dt>Training set</dt><dd>{activeScenario.training} good images</dd><dt>Validation set</dt><dd>{activeScenario.testing} held-out images</dd><dt>Image F1</dt><dd>{activeScenario.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{activeScenario.pixelF1.toFixed(2)}%</dd><dt>License constraint</dt><dd>Non-commercial benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>DATASET PREPARATION</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Not yet trained — unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>INPUT DEFINITION REQUIRED</span><h3>3D / depth inspection</h3><p>A real 3D model requires the target sensor format and representative good/defective scans.</p></div><dl><dt>Supported design targets</dt><dd>Depth map, PLY/PCD point cloud, or RGB-D frame pair</dd><dt>Status</dt><dd>Not yet trained — 2D models must not be used as 3D validators</dd><dt>Next decision</dt><dd>Choose camera/sensor and inspection tolerance</dd></dl></article></div>}
             {view === "settings" && <div className="workspace-view"><article className="settings-card"><h3>POC settings</h3><label><span>Decision source</span><select defaultValue="model"><option value="model">Trained model threshold</option></select></label><label><span>Inference device</span><select defaultValue="browser"><option value="browser">Local browser (WASM)</option></select></label><label><span>Heatmap overlay</span><input type="checkbox" defaultChecked /></label><p>Settings are device-local for this proof of concept. Production settings require authenticated, persistent storage.</p></article></div>}
           </section>
         </div>
