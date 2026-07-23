@@ -1,0 +1,5 @@
+file,ground_truth,expected_decision,defect_type
+cable-good.png,good,NORMAL,acceptable cable assembly
+cable-bent-wire.png,defective,ANOMALY,bent wire
+cable-combined.png,defective,ANOMALY,multiple defects
+cable-missing-cable.png,defective,ANOMALY,missing cable
