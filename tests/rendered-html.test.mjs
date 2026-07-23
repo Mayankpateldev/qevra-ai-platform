@@ -34,8 +34,10 @@ test("ships every real inference asset used by the scenario selector", async () 
     "forgesight-metal-nut.onnx",
     "forgesight-bottle.onnx",
     "forgesight-cable.onnx",
-    "forgesight-pill.onnx",
   ].map(file => access(new URL(`public/models/${file}`, projectRoot))));
+
+  await Promise.all(Array.from({ length: 7 }, (_, index) =>
+    access(new URL(`public/models/forgesight-pill.onnx.part0${index}`, projectRoot))));
 
   await Promise.all([
     "forgesight-test-data.zip",

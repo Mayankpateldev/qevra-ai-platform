@@ -18,28 +18,28 @@ const benchmarkGroups = [
 
 const scenarios = {
   metal_nut: {
-    name: "Metal nut", area: "Automotive components", input: "metal-nut", modelPath: "/models/forgesight-metal-nut.onnx", modelSize: "17 MB", threshold: .7668, pixelThreshold: .5677, usePredLabel: false,
+    name: "Metal nut", area: "Automotive components", input: "metal-nut", modelPath: "/models/forgesight-metal-nut.onnx", modelParts: [], modelSize: "17 MB", threshold: .7668, pixelThreshold: .5677, usePredLabel: false,
     training: 220, testing: 115, imageAuRoc: 94.38, imageF1: 94.62, pixelAuRoc: 98.13, pixelF1: 82.17, download: "/samples/forgesight-test-data.zip",
     checks: ["Bent or deformed geometry", "Surface scratches and discoloration", "Incorrect orientation or flipped parts"],
     samples: [{ id: "good", label: "Normal", truth: "Acceptable part" }, { id: "bent", label: "Bent", truth: "Bent geometry" }, { id: "color", label: "Color", truth: "Discoloration" }, { id: "flip", label: "Flipped", truth: "Flipped orientation" }, { id: "scratch", label: "Scratch", truth: "Surface scratch" }],
     groups: benchmarkGroups,
   },
   bottle: {
-    name: "Bottle", area: "Packaging", input: "bottle", modelPath: "/models/forgesight-bottle.onnx", modelSize: "23 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
+    name: "Bottle", area: "Packaging", input: "bottle", modelPath: "/models/forgesight-bottle.onnx", modelParts: [], modelSize: "23 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
     training: 209, testing: 83, imageAuRoc: 100, imageF1: 99.20, pixelAuRoc: 97.83, pixelF1: 66.92, download: "/samples/bottle-test-data.zip",
     checks: ["Large or small breaks around the rim", "Foreign material or contamination", "Bottle silhouette and surface consistency"],
     samples: [{ id: "good", label: "Normal", truth: "Acceptable bottle" }, { id: "broken-large", label: "Large break", truth: "Large rim break" }, { id: "broken-small", label: "Small break", truth: "Small rim break" }, { id: "contamination", label: "Contamination", truth: "Contamination" }],
     groups: [{ id: "GOOD", time: "20 images", status: "Pass", confidence: "Normal", issue: "Acceptable bottles" }, { id: "BROKEN LARGE", time: "20 images", status: "Reject", confidence: "Anomaly", issue: "Large rim break" }, { id: "BROKEN SMALL", time: "22 images", status: "Reject", confidence: "Anomaly", issue: "Small rim break" }, { id: "CONTAMINATION", time: "21 images", status: "Reject", confidence: "Anomaly", issue: "Foreign material" }],
   },
   cable: {
-    name: "Cable assembly", area: "Electronics", input: "cable assembly", modelPath: "/models/forgesight-cable.onnx", modelSize: "24 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
+    name: "Cable assembly", area: "Electronics", input: "cable assembly", modelPath: "/models/forgesight-cable.onnx", modelParts: [], modelSize: "24 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
     training: 224, testing: 150, imageAuRoc: 98.28, imageF1: 94.97, pixelAuRoc: 98.20, pixelF1: 63.26, download: "/samples/cable-test-data.zip",
     checks: ["Bent, cut, or punctured wires", "Missing, swapped, or misplaced cable sections", "Combined assembly and insulation defects"],
     samples: [{ id: "good", label: "Normal", truth: "Acceptable cable assembly" }, { id: "bent-wire", label: "Bent wire", truth: "Bent wire" }, { id: "combined", label: "Combined", truth: "Multiple defects" }, { id: "missing-cable", label: "Missing cable", truth: "Missing cable" }],
     groups: [{ id: "GOOD", time: "58 images", status: "Pass", confidence: "Normal", issue: "Acceptable assemblies" }, { id: "BENT WIRE", time: "13 images", status: "Reject", confidence: "Anomaly", issue: "Wire geometry" }, { id: "CABLE SWAP", time: "12 images", status: "Reject", confidence: "Anomaly", issue: "Wrong position" }, { id: "COMBINED", time: "11 images", status: "Reject", confidence: "Anomaly", issue: "Multiple defects" }, { id: "INSULATION", time: "34 images", status: "Reject", confidence: "Anomaly", issue: "Cut or puncture" }, { id: "MISSING", time: "22 images", status: "Reject", confidence: "Anomaly", issue: "Missing wire/cable" }],
   },
   pill: {
-    name: "Pill", area: "Pharma", input: "pill", modelPath: "/models/forgesight-pill.onnx", modelSize: "27 MB", threshold: .5, pixelThreshold: .5, usePredLabel: true,
+    name: "Pill", area: "Pharma", input: "pill", modelPath: "forgesight-pill-chunked-v1", modelParts: ["/models/forgesight-pill.onnx.part00", "/models/forgesight-pill.onnx.part01", "/models/forgesight-pill.onnx.part02", "/models/forgesight-pill.onnx.part03", "/models/forgesight-pill.onnx.part04", "/models/forgesight-pill.onnx.part05", "/models/forgesight-pill.onnx.part06"], modelSize: "27 MB · streamed", threshold: .5, pixelThreshold: .5, usePredLabel: true,
     training: 267, testing: 167, imageAuRoc: 93.18, imageF1: 95.14, pixelAuRoc: 98.04, pixelF1: 71.63, download: "/samples/pill-test-data.zip",
     checks: ["Cracks and visible surface damage", "Color deviation or contamination", "Faulty imprint, shape, and pill type consistency"],
     samples: [{ id: "good", label: "Normal", truth: "Acceptable pill" }, { id: "color", label: "Color", truth: "Color deviation" }, { id: "contamination", label: "Contamination", truth: "Contamination" }, { id: "crack", label: "Crack", truth: "Crack" }, { id: "faulty-imprint", label: "Imprint", truth: "Faulty imprint" }],
@@ -91,7 +91,19 @@ export default function Home() {
         if (!ort) throw new Error("Inference runtime is still loading");
         setModelStatus(inferenceSession && inferenceModelPath === activeScenario.modelPath ? "Running real inference…" : `Loading trained model · ${activeScenario.modelSize}…`);
         if (!inferenceSession || inferenceModelPath !== activeScenario.modelPath) {
-          inferenceSession = await ort.InferenceSession.create(activeScenario.modelPath, { executionProviders: ["wasm"] });
+          if (activeScenario.modelParts.length > 0) {
+            const chunks = await Promise.all(activeScenario.modelParts.map(async part => {
+              const response = await fetch(part);
+              if (!response.ok) throw new Error(`Model chunk unavailable: ${part}`);
+              return new Uint8Array(await response.arrayBuffer());
+            }));
+            const modelBytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+            let offset = 0;
+            for (const chunk of chunks) { modelBytes.set(chunk, offset); offset += chunk.byteLength; }
+            inferenceSession = await ort.InferenceSession.create(modelBytes, { executionProviders: ["wasm"] });
+          } else {
+            inferenceSession = await ort.InferenceSession.create(activeScenario.modelPath, { executionProviders: ["wasm"] });
+          }
           inferenceModelPath = activeScenario.modelPath;
         }
         setModelStatus("Running real inference…");
