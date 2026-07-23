@@ -1,0 +1,5 @@
+file,ground_truth,expected_decision,defect_type
+bottle-good.png,good,NORMAL,acceptable bottle
+bottle-broken-large.png,defective,ANOMALY,large rim break
+bottle-broken-small.png,defective,ANOMALY,small rim break
+bottle-contamination.png,defective,ANOMALY,contamination
