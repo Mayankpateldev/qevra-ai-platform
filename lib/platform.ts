@@ -43,6 +43,10 @@ export async function requirePlatformUser(allowedRoles?: PlatformRole[]) {
     displayName: identity.displayName,
     role: initialRole,
   }).onConflictDoNothing();
+  if (initialRole === "admin") {
+    await db.update(users).set({ role: "admin", updatedAt: new Date().toISOString() })
+      .where(and(eq(users.organizationId, PRIMARY_ORGANIZATION_ID), eq(users.email, normalizedEmail)));
+  }
 
   const [user] = await db.select().from(users).where(and(eq(users.organizationId, PRIMARY_ORGANIZATION_ID), eq(users.email, normalizedEmail))).limit(1);
   if (!user) throw new PlatformError(403, "User provisioning failed");
