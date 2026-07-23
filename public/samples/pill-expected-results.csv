@@ -1,0 +1,6 @@
+file,ground_truth,expected_decision,defect_type
+pill-good.png,good,NORMAL,acceptable pill
+pill-color.png,defective,ANOMALY,color deviation
+pill-contamination.png,defective,ANOMALY,contamination
+pill-crack.png,defective,ANOMALY,crack
+pill-faulty-imprint.png,defective,ANOMALY,faulty imprint
