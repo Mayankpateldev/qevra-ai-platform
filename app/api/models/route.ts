@@ -29,11 +29,12 @@ export async function PATCH(request: Request) {
     if (action === "reject" && model.status !== "candidate") return Response.json({ error: "Only candidate models can be rejected" }, { status: 409 });
     if (action === "retire" && !["approved", "deployed"].includes(model.status)) return Response.json({ error: "Only approved or deployed models can be retired" }, { status: 409 });
     const status = action === "approve" ? "approved" as const : action === "reject" ? "rejected" as const : "retired" as const;
+    const auditAction = action === "approve" ? "model.approved" : action === "reject" ? "model.rejected" : "model.retired";
     const approval = action === "approve" ? { approvedBy: user.email, approvedAt: new Date().toISOString() } : {};
     await db.batch([
       db.update(models).set({ status, ...approval, updatedAt: new Date().toISOString() }).where(and(eq(models.id, modelId), eq(models.organizationId, user.organizationId))),
       ...(action === "retire" ? [db.update(recipes).set({ activeModelId: null, status: "retired", updatedAt: new Date().toISOString() }).where(and(eq(recipes.id, model.recipeId), eq(recipes.activeModelId, modelId), eq(recipes.organizationId, user.organizationId)))] : []),
-      db.insert(auditEvents).values({ id: crypto.randomUUID(), organizationId: user.organizationId, actorEmail: user.email, action: `model.${action}d`, entityType: "model", entityId: modelId, detailJson: JSON.stringify({ previousStatus: model.status, status, comment: payload.comment?.trim().slice(0, 2000) ?? "" }) }),
+      db.insert(auditEvents).values({ id: crypto.randomUUID(), organizationId: user.organizationId, actorEmail: user.email, action: auditAction, entityType: "model", entityId: modelId, detailJson: JSON.stringify({ previousStatus: model.status, status, comment: payload.comment?.trim().slice(0, 2000) ?? "" }) }),
     ]);
     return Response.json({ model: { ...model, status, ...approval } });
   } catch (error) { return platformErrorResponse(error); }
