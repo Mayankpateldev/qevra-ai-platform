@@ -1,0 +1,19 @@
+{
+  "model": "PatchCore",
+  "backbone": "ResNet-18",
+  "category": "metal_nut",
+  "training_images": 220,
+  "test_images": 115,
+  "checkpoint": "/Users/mayankpatel/Documents/Codex/2026-07-21/https-www-linkedin-com-company-switchon/model/artifacts/Patchcore/MVTecAD/metal_nut/v0/weights/lightning/model.ckpt",
+  "metrics": {
+    "image_AUROC": 0.9437927663734116,
+    "image_F1Score": 0.946236559139785,
+    "pixel_AUROC": 0.9813289908666206,
+    "pixel_F1Score": 0.8217396066108251
+  },
+  "browser_compaction": {
+    "memory_bank_vectors": 2048,
+    "decision_threshold": 0.7668,
+    "onnx_size_mb": 17
+  }
+}

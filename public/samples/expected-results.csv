@@ -1,0 +1,6 @@
+file,ground_truth,expected_decision,defect_type
+metal-nut-good.png,good,NORMAL,acceptable part
+metal-nut-bent.png,defective,ANOMALY,bent geometry
+metal-nut-color.png,defective,ANOMALY,discoloration
+metal-nut-flip.png,defective,ANOMALY,flipped orientation
+metal-nut-scratch.png,defective,ANOMALY,surface scratch

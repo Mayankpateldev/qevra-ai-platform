@@ -37,6 +37,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head><script src="/ort/ort.wasm.min.js" defer /></head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
