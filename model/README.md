@@ -1,4 +1,4 @@
-# ForgeSight real-model POC
+# QEVRA AI real-model foundation
 
 This POC uses PatchCore anomaly detection with a ResNet-18 feature backbone.
 It learns only from acceptable metal-nut images and evaluates against unseen

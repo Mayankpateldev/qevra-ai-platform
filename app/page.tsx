@@ -49,17 +49,26 @@ const scenarios = {
 
 type ScenarioId = keyof typeof scenarios;
 
+const pillVariants = {
+  benchmark: { name: "Benchmark pill family", status: "active", detail: "Current trained MVTec pill recipe" },
+  tablet_round: { name: "Round tablet · custom SKU", status: "enrollment", detail: "Needs representative production images" },
+  capsule: { name: "Capsule · custom SKU", status: "enrollment", detail: "Needs representative production images" },
+  blister: { name: "Blister pack · custom SKU", status: "enrollment", detail: "Needs pack layout and camera samples" },
+} as const;
+type PillVariantId = keyof typeof pillVariants;
+
 function Mark({ dark = false }: { dark?: boolean }) {
   return <span className={`mark ${dark ? "mark-dark" : ""}`} aria-hidden="true"><i /><i /><i /></span>;
 }
 
-export default function Home() {
-  const [demo, setDemo] = useState(false);
+export default function Home({ initialDemo = false, workspaceUser = null }: { initialDemo?: boolean; workspaceUser?: { displayName: string; email: string } | null }) {
+  const [demo, setDemo] = useState(initialDemo);
   const [live, setLive] = useState(true);
   const [reviewed, setReviewed] = useState(false);
   const [operatorDecision, setOperatorDecision] = useState<"acceptable" | "anomaly" | null>(null);
   const [queuedForTraining, setQueuedForTraining] = useState(false);
   const [scenarioId, setScenarioId] = useState<ScenarioId>("metal_nut");
+  const [pillVariantId, setPillVariantId] = useState<PillVariantId>("benchmark");
   const [sample, setSample] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<{ confidence: number; finding: string; x: number; y: number; heatmap: string; affected: number; latencyMs: number } | null>(null);
   const [knownTruth, setKnownTruth] = useState<string | null>(null);
@@ -74,9 +83,23 @@ export default function Home() {
   const cameraStream = useRef<MediaStream | null>(null);
   const analyzingRef = useRef(false);
   const activeScenario = scenarios[scenarioId];
+  const registeredRecipes = Object.entries(scenarios) as [ScenarioId, (typeof scenarios)[ScenarioId]][];
+  const activePillVariant = pillVariants[pillVariantId];
+  const inspectionReady = scenarioId !== "pill" || activePillVariant.status === "active";
+
+  const openProduct = (viewName = "command") => {
+    setView(viewName);
+    if (workspaceUser) setDemo(true);
+    else window.location.href = "/workspace";
+  };
 
   const inspectSample = (file?: File, groundTruth?: string) => {
     if (!file || !file.type.startsWith("image/")) return;
+    if (!inspectionReady) {
+      setModelStatus(`${activePillVariant.name} is not enrolled · create a recipe before inspection`);
+      setView("registry");
+      return;
+    }
     setKnownTruth(groundTruth ?? null);
     setReviewed(false);
     setOperatorDecision(null);
@@ -157,6 +180,12 @@ export default function Home() {
   };
 
   const changeScenario = (next: ScenarioId) => {
+    cameraStream.current?.getTracks().forEach(track => track.stop());
+    cameraStream.current = null;
+    if (cameraVideo.current) cameraVideo.current.srcObject = null;
+    setCameraActive(false);
+    setAutoInspect(false);
+    setCameraMessage("Camera stopped · restart after confirming the new inspection recipe");
     setScenarioId(next);
     setSample(null);
     setAnalysis(null);
@@ -179,6 +208,10 @@ export default function Home() {
 
   const startCamera = async () => {
     setView("live");
+    if (!inspectionReady) {
+      setCameraMessage(`${activePillVariant.name} is not enrolled. Select the benchmark recipe or enroll this SKU.`);
+      return;
+    }
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraMessage("This browser does not expose camera capture");
       return;
@@ -231,23 +264,23 @@ export default function Home() {
   return (
     <main>
       <header className="nav shell">
-        <a href="#top" className="brand" aria-label="ForgeSight home"><Mark /> <b>FORGESIGHT</b><small>AI</small></a>
+        <a href="#top" className="brand" aria-label="QEVRA AI home"><Mark /> <b>QEVRA</b><small>AI</small></a>
         <nav aria-label="Primary navigation">
           <a href="#platform">Platform</a><a href="#workflow">How it works</a><a href="#industries">Industries</a>
         </nav>
-        <button className="nav-cta" onClick={() => setDemo(true)}>Launch working POC <Arrow /></button>
+        <div className="nav-access"><a className="nav-login" href="/workspace">Sign in with ChatGPT</a><button className="nav-cta" onClick={() => openProduct()}>Open quality workspace <Arrow /></button></div>
       </header>
 
       <section className="hero shell" id="top">
         <div className="hero-copy">
           <p className="eyebrow"><span /> Quality intelligence for modern factories</p>
-          <h1>See the defect.<br /><em>Understand why.</em></h1>
-          <p className="lede">ForgeSight turns every inspection into intelligence—helping manufacturing teams catch defects, trace their source, and improve every production run.</p>
+          <h1>Quality intelligence<br /><em>for every product.</em></h1>
+          <p className="lede">QEVRA AI routes every product family, SKU, and variant to the correct inspection recipe—then detects visual anomalies, explains the result, and preserves the operator decision.</p>
           <div className="hero-actions">
-            <button className="primary" onClick={() => setDemo(true)}>Open inspection POC <Arrow /></button>
+            <button className="primary" onClick={() => openProduct("live")}>Open working inspection POC <Arrow /></button>
             <a className="text-link" href="#workflow">See how it works <span>↓</span></a>
           </div>
-          <div className="trust-row"><span>EDGE NATIVE</span><span>CAMERA AGNOSTIC</span><span>EXPLAINABLE AI</span></div>
+          <div className="trust-row"><span>RECIPE ROUTING</span><span>EDGE INFERENCE</span><span>HUMAN REVIEW</span></div>
         </div>
 
         <div className="machine-visual" aria-label="Illustration of an AI inspection station">
@@ -271,11 +304,11 @@ export default function Home() {
       </section>
 
       <section className="platform shell" id="platform">
-        <div className="section-heading"><p className="eyebrow"><span /> One connected platform</p><h2>From a single camera<br />to every line you run.</h2><p>Deploy inspection at the edge. Learn across the enterprise. ForgeSight connects decisions on the line to the people improving the process.</p></div>
+        <div className="section-heading"><p className="eyebrow"><span /> One governed platform</p><h2>Right product.<br />Right model. Every time.</h2><p>QEVRA AI separates product identity from defect detection. Known SKUs use validated recipes; unknown products are held for enrollment instead of being mislabeled as defects.</p></div>
         <div className="feature-grid">
-          <article className="feature feature-dark"><div className="feature-num">01</div><div className="mini-inspection"><div className="mini-part" /><span className="mini-box">ANOMALY · 97%</span></div><h3>Inspect at line speed</h3><p>Catch subtle surface, assembly, and dimensional defects in milliseconds—without slowing production.</p><a href="#workflow">Edge inspection <Arrow /></a></article>
-          <article className="feature"><div className="feature-num">02</div><div className="cause-map"><span /><span /><span /><span /><b>SHIFT B</b><i>MACHINE 07</i></div><h3>Trace the real cause</h3><p>Connect defects with machine, shift, supplier, batch, and process data to reveal patterns that matter.</p><a href="#workflow">Defect intelligence <Arrow /></a></article>
-          <article className="feature feature-orange"><div className="feature-num">03</div><div className="review-card"><small>NEEDS REVIEW</small><div><b>Edge burr</b><span>84.2%</span></div><button onClick={() => { setView("review"); setDemo(true); }}>Open review queue</button></div><h3>Keep experts in control</h3><p>Route uncertain results to the right person and continuously improve with every decision.</p><a href="#workflow">Human-in-the-loop <Arrow /></a></article>
+          <article className="feature feature-dark"><div className="feature-num">01</div><div className="mini-inspection"><div className="mini-part" /><span className="mini-box">SKU ROUTED</span></div><h3>Route the product</h3><p>Map line, product family, SKU, camera, and inspection recipe before inference. Unknown products stop safely for enrollment.</p><a href="#workflow">Recipe governance <Arrow /></a></article>
+          <article className="feature"><div className="feature-num">02</div><div className="cause-map"><span /><span /><span /><span /><b>SHIFT B</b><i>LINE 07</i></div><h3>Inspect at the edge</h3><p>Run real local inference from an upload or continuous camera feed, with heatmaps, scores, latency, and quality-plan context.</p><a href="#workflow">Live inspection <Arrow /></a></article>
+          <article className="feature feature-orange"><div className="feature-num">03</div><div className="review-card"><small>NEEDS REVIEW</small><div><b>Visual deviation</b><span>84.2%</span></div><button onClick={() => openProduct("review")}>Open review queue</button></div><h3>Close the quality loop</h3><p>Separate operator disposition from retraining. Every accepted variant, confirmed anomaly, and model version remains traceable.</p><a href="#workflow">Human review <Arrow /></a></article>
         </div>
       </section>
 
@@ -285,7 +318,7 @@ export default function Home() {
           <div className="workflow-title"><h2>Train today.<br />Inspect tomorrow.</h2><p>A guided workflow takes your team from good samples to a production-ready inspection—without a data science project.</p></div>
           <div className="steps">
             <article><b>01</b><div className="step-icon">◎</div><h3>Capture</h3><p>Collect representative parts from your existing line and define what good looks like.</p></article>
-            <article><b>02</b><div className="step-icon">⌁</div><h3>Teach</h3><p>Mark areas that matter. ForgeSight builds and validates the inspection automatically.</p></article>
+            <article><b>02</b><div className="step-icon">⌁</div><h3>Teach</h3><p>Register each product and variant. QEVRA AI builds and validates a recipe using representative production images.</p></article>
             <article><b>03</b><div className="step-icon">◫</div><h3>Deploy</h3><p>Publish to your edge station, connect the PLC, and start inspecting in production.</p></article>
             <article><b>04</b><div className="step-icon">↗</div><h3>Improve</h3><p>Find recurring patterns, validate countermeasures, and prevent the next defect.</p></article>
           </div>
@@ -295,22 +328,23 @@ export default function Home() {
       <section className="industries shell" id="industries">
         <div><p className="eyebrow"><span /> Built for precision</p><h2>One quality layer.<br />Every process.</h2></div>
         <div className="industry-list">
-          {["Automotive components", "Electronics assembly", "Pharmaceutical packaging", "Consumer products"].map((x, i) => <button onClick={() => { setView("live"); setDemo(true); }} key={x}><b>0{i + 1}</b><span>{x}</span><Arrow /></button>)}
+          {["IoT devices & enclosures", "Electronics & cable assemblies", "Pharma, pills & packaging", "Machined components"].map((x, i) => <button onClick={() => openProduct("live")} key={x}><b>0{i + 1}</b><span>{x}</span><Arrow /></button>)}
         </div>
       </section>
 
       <section className="cta">
-        <div className="shell cta-inner"><Mark dark /><div><p>YOUR NEXT RUN STARTS HERE</p><h2>Make quality<br />a learning system.</h2></div><button onClick={() => setDemo(true)}>Launch working POC <Arrow /></button></div>
+        <div className="shell cta-inner"><Mark dark /><div><p>YOUR QUALITY WORKSPACE</p><h2>Govern every recipe.<br />Learn from every result.</h2></div><button onClick={() => openProduct()}>Open quality workspace <Arrow /></button></div>
       </section>
-      <footer className="shell"><a className="brand" href="#top"><Mark /> <b>FORGESIGHT</b><small>AI</small></a><p>Quality intelligence for modern factories.</p><span>POC · 2026</span></footer>
+      <footer className="shell"><a className="brand" href="#top"><Mark /> <b>QEVRA</b><small>AI</small></a><p>Every product, proven.</p><span>REAL MODEL POC · 2026</span></footer>
 
-      {demo && <div className="demo" role="dialog" aria-modal="true" aria-label="ForgeSight live inspection demo">
-        <div className="demo-top"><div className="brand"><Mark dark /><b>FORGESIGHT</b><small>AI</small></div><div><span className={live ? "online" : "offline"}>{live ? "● LINE ONLINE" : "● LINE PAUSED"}</span><button onClick={() => setDemo(false)} aria-label="Close demo">×</button></div></div>
+      {demo && <div className="demo" role="dialog" aria-modal="true" aria-label="QEVRA AI live inspection workspace">
+        <div className="demo-top"><div className="brand"><Mark dark /><b>QEVRA</b><small>AI</small></div><div>{workspaceUser && <span className="account-chip"><b>{workspaceUser.displayName}</b><small>{workspaceUser.email}</small></span>}<span className={live ? "online" : "offline"}>{live ? "● LINE ONLINE" : "● LINE PAUSED"}</span>{workspaceUser && <a className="signout" href="/signout-with-chatgpt?return_to=/">Sign out</a>}<button onClick={() => setDemo(false)} aria-label="Close workspace">×</button></div></div>
         <div className="demo-body">
-          <aside><small>WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Model registry</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>FS</span><p><b>{activeScenario.name}</b><small>{activeScenario.area} · validated</small></p></div></aside>
+          <aside><small>QUALITY WORKSPACE</small><button className={view === "command" ? "active" : ""} onClick={() => setView("command")}>▦ Command center</button><button className={view === "live" ? "active" : ""} onClick={() => setView("live")}>◉ Live inspection</button><button className={view === "review" ? "active" : ""} onClick={() => setView("review")}>◇ Review queue <i>{analysis && !reviewed ? 1 : 0}</i></button><button className={view === "intelligence" ? "active" : ""} onClick={() => setView("intelligence")}>⌁ Model results</button><button className={view === "trace" ? "active" : ""} onClick={() => setView("trace")}>▤ Traceability</button><small>OPERATIONS</small><button className={view === "lines" ? "active" : ""} onClick={() => setView("lines")}>□ Lines &amp; stations</button><button className={view === "registry" ? "active" : ""} onClick={() => setView("registry")}>△ Recipe registry</button><button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>⚙ Settings</button><div className="plant"><span>QV</span><p><b>{activeScenario.name}</b><small>{activeScenario.area} · {inspectionReady ? "recipe active" : "enrollment required"}</small></p></div></aside>
           <section className="dash">
-            <div className="dash-head"><div><small>REAL MODEL POC · {activeScenario.name.toUpperCase()}</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Model registry"}</h2></div><div className="dash-actions"><label className="scenario-selector"><span>Scenario</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut</option><option value="bottle">Bottle packaging</option><option value="cable">Cable assembly</option><option value="pill">Pill inspection</option></select></label><input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>{activeScenario.name} test data</a><button data-testid="camera-toggle" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Stop camera" : "Start camera"}</button></>}<button className="inspect-button" onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
-            <div className="model-note"><b data-testid="model-status">{modelStatus}</b><span>Trained on {activeScenario.training} acceptable samples · evaluated on {activeScenario.testing} unseen images · CC BY-NC-SA benchmark only</span></div>
+            <div className="dash-head"><div><small>REAL MODEL POC · {activeScenario.area.toUpperCase()}</small><h2 data-testid="workspace-title">{view === "command" ? "Command center" : view === "live" ? "Live inspection" : view === "review" ? "Review queue" : view === "intelligence" ? "Measured model results" : view === "trace" ? "Traceability" : view === "lines" ? "Lines & stations" : view === "settings" ? "Settings" : "Recipe registry"}</h2></div><div className="dash-actions"><label className="scenario-selector"><span>Inspection recipe</span><select data-testid="scenario-select" value={scenarioId} onChange={e => changeScenario(e.target.value as ScenarioId)}><option value="metal_nut">Metal nut · automotive</option><option value="bottle">Bottle · packaging</option><option value="cable">Cable assembly · electronics</option><option value="pill">Pill family · pharma</option></select></label>{scenarioId === "pill" && <label className="scenario-selector variant-selector"><span>Pill SKU / variant</span><select value={pillVariantId} onChange={e => { const next = e.target.value as PillVariantId; stopCamera(); setPillVariantId(next); setSample(null); setAnalysis(null); setReviewed(false); setOperatorDecision(null); setQueuedForTraining(false); setModelStatus(pillVariants[next].status === "active" ? "Model ready · benchmark pill recipe" : `${pillVariants[next].name} · enrollment required`); }}><option value="benchmark">Benchmark pill family · active</option><option value="tablet_round">Round tablet · enroll</option><option value="capsule">Capsule · enroll</option><option value="blister">Blister pack · enroll</option></select></label>}<input ref={fileInput} type="file" accept="image/*" hidden onChange={e => inspectSample(e.target.files?.[0])} />{view === "live" && inspectionReady && <>{activeScenario.samples.map(item => <button key={item.id} data-testid={`try-${item.id}`} onClick={() => inspectBundledSample(item.id, item.truth)}>{item.label}</button>)}<a className="sample-download" href={activeScenario.download} download>{activeScenario.name} test data</a><button data-testid="camera-toggle" onClick={cameraActive ? stopCamera : startCamera}>{cameraActive ? "Stop camera" : "Start camera"}</button></>}<button className="inspect-button" disabled={!inspectionReady} onClick={() => { setView("live"); fileInput.current?.click(); }}>+ Inspect an image</button>{(view === "command" || view === "live" || view === "lines") && <button onClick={() => setLive(!live)}>{live ? "Pause" : "Resume"}</button>}</div></div>
+            <div className={`model-note ${inspectionReady ? "" : "scope-alert"}`}><b data-testid="model-status">{modelStatus}</b><span>{inspectionReady ? `Recipe scope: ${activeScenario.name}${scenarioId === "pill" ? ` / ${activePillVariant.name}` : ""} · ${activeScenario.training} acceptable benchmark samples · ${activeScenario.testing} held-out images` : `${activePillVariant.detail}. This product will not be sent through the wrong model.`}</span></div>
+            <div className="recipe-scope"><b>Model routing guard</b><span>This POC validates only the selected registered recipe. A different product, pill shape, imprint, color, package layout, camera angle, or lighting setup requires its own validated variant. Unknown inputs are enrollment candidates—not confirmed defects.</span></div>
             {(view === "command" || view === "intelligence") && <div className="dash-metrics"><article><small>TRAINING IMAGES</small><b>{activeScenario.training}</b><span>Acceptable samples only</span></article><article><small>TEST IMAGES</small><b>{activeScenario.testing}</b><span>Held-out benchmark split</span></article><article><small>IMAGE F1</small><b>{activeScenario.imageF1.toFixed(2)}%</b><span>Measured</span></article><article><small>IMAGE AUROC</small><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><span>Measured</span></article></div>}
             {(view === "command" || view === "live") && <div className="dash-grid">
               <article className="live-panel"><div className="panel-title"><div><span className={live ? "pulse" : "paused"} /> <b>{sample ? "Captured sample · real inference" : `Upload or capture a ${activeScenario.input} image`}</b></div><small>{analyzing ? "ANALYZING…" : "PATCHCORE · ONNX"}</small></div><div className={`camera-console ${cameraActive ? "active" : ""}`}><video ref={cameraVideo} autoPlay muted playsInline aria-label="Live inspection camera preview" /><div><b>{cameraActive ? "LIVE CAMERA · AUTO INSPECTION" : "CAMERA READY"}</b><span>{cameraMessage}</span><p>{cameraActive ? <><button onClick={captureCameraFrame}>Inspect now</button><button className={autoInspect ? "auto-active" : ""} onClick={() => setAutoInspect(!autoInspect)}>{autoInspect ? "Pause auto" : "Resume auto"}</button></> : <button className="start-camera-primary" data-testid="camera-panel-start" onClick={startCamera}>Start camera &amp; inspect continuously</button>}</p></div></div><div className={`feed ${sample ? "sample-feed" : ""}`}>{sample ? <img src={sample} alt="Uploaded manufacturing sample" /> : <button className="upload-empty" onClick={() => fileInput.current?.click()}>Choose an image or start the camera</button>}{analysis && <img className="heatmap" src={analysis.heatmap} alt="Model anomaly heatmap" />}{analysis && <span className="detect-box uploaded-box" style={{ left: `${analysis.x}%`, top: `${analysis.y}%` }}><b>{analysis.finding.toUpperCase()}</b>{analysis.confidence.toFixed(1)}</span>}{analyzing && <div className="analysis-scan" />}<small>{sample ? "REAL PATCHCORE ANOMALY MAP" : "NO SAMPLE SELECTED"}</small></div><div className="feed-result"><div><small>FINAL DISPOSITION</small><b data-testid="model-decision" className={operatorDecision === "acceptable" ? "accepted" : "reject"}>{operatorDecision === "acceptable" ? "ACCEPTED · OVERRIDE" : operatorDecision === "anomaly" ? "REJECT · CONFIRMED" : analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY · REVIEW" : "NORMAL") : "—"}</b></div><div><small>MODEL PREDICTION</small><b>{analysis ? (analysis.finding.startsWith("Anomaly") ? "ANOMALY" : "NORMAL") : "—"}</b></div><div><small>ANOMALY SCORE</small><b data-testid="anomaly-score">{analysis ? analysis.confidence.toFixed(2) : "—"}</b></div><div><small>PROCESSING TIME</small><b>{analysis ? `${analysis.latencyMs.toFixed(0)} ms` : "—"}</b></div></div></article>
@@ -321,7 +355,7 @@ export default function Home() {
             {view === "review" && <div className="workspace-view"><article className="review-work"><div><small>CURRENT REVIEW</small><h3>{operatorDecision === "acceptable" ? "Accepted by operator" : operatorDecision === "anomaly" ? "Anomaly confirmed" : analysis ? analysis.finding : "No inspection awaiting review"}</h3><p>{analysis ? operatorDecision === "acceptable" ? `The operator accepted this item despite the model score of ${analysis.confidence.toFixed(2)}. The original model prediction remains in the audit record.` : operatorDecision === "anomaly" ? `The operator confirmed the model anomaly at score ${analysis.confidence.toFixed(2)}.` : `Model anomaly score: ${analysis.confidence.toFixed(2)}. Confirm whether the highlighted region should be accepted as a true anomaly.` : "Run an image through Live inspection to create a review item."}</p>{sample && <img src={sample} alt="Part awaiting review" />}</div><div className="review-actions"><button disabled={!analysis} onClick={() => { setReviewed(true); setOperatorDecision("anomaly"); }}>Confirm anomaly</button><button disabled={!analysis} onClick={() => { setReviewed(true); setOperatorDecision("acceptable"); }}>Mark acceptable</button><button disabled={!analysis || operatorDecision !== "acceptable" || queuedForTraining} onClick={() => setQueuedForTraining(true)}>Add variant to retraining set</button><span>{queuedForTraining ? "Accepted variant queued for the next model version. The current model has not been retrained." : reviewed ? "Operator disposition applied to this inspection." : "Human decision pending."}</span></div></article></div>}
             {view === "intelligence" && <div className="workspace-view"><article className="result-card"><h3>{activeScenario.name} held-out evaluation</h3><div className="metric-bars"><p><span>Image AUROC</span><b>{activeScenario.imageAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.imageAuRoc}%`}} /></p><p><span>Image F1</span><b>{activeScenario.imageF1.toFixed(2)}%</b><i style={{width:`${activeScenario.imageF1}%`}} /></p><p><span>Pixel AUROC</span><b>{activeScenario.pixelAuRoc.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelAuRoc}%`}} /></p><p><span>Pixel F1</span><b>{activeScenario.pixelF1.toFixed(2)}%</b><i style={{width:`${activeScenario.pixelF1}%`}} /></p></div><p className="disclaimer">Measured on the MVTec AD {activeScenario.name.toLowerCase()} test split. These results are benchmark evidence, not customer production performance.</p></article></div>}
             {view === "lines" && <div className="workspace-view"><article className="station-card"><div><span className={live ? "pulse" : "paused"} /><b>POC browser station</b><small>{live ? "Online" : "Paused"}</small></div><dl><dt>Runtime</dt><dd>ONNX Runtime Web / WASM</dd><dt>Model</dt><dd>PatchCore ResNet-18</dd><dt>Input</dt><dd>256 × 256 RGB</dd><dt>Processing</dt><dd>Local in this browser</dd></dl></article></div>}
-            {view === "registry" && <div className="workspace-view"><article className="registry-card"><div className="registry-title"><span>ACTIVE</span><h3>{activeScenario.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {activeScenario.modelSize} ONNX</p></div><dl><dt>Training set</dt><dd>{activeScenario.training} good images</dd><dt>Validation set</dt><dd>{activeScenario.testing} held-out images</dd><dt>Image F1</dt><dd>{activeScenario.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{activeScenario.pixelF1.toFixed(2)}%</dd><dt>License constraint</dt><dd>Non-commercial benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>DATASET PREPARATION</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Not yet trained — unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>INPUT DEFINITION REQUIRED</span><h3>3D / depth inspection</h3><p>A real 3D model requires the target sensor format and representative good/defective scans.</p></div><dl><dt>Supported design targets</dt><dd>Depth map, PLY/PCD point cloud, or RGB-D frame pair</dd><dt>Status</dt><dd>Not yet trained — 2D models must not be used as 3D validators</dd><dt>Next decision</dt><dd>Choose camera/sensor and inspection tolerance</dd></dl></article></div>}
+            {view === "registry" && <div className="workspace-view"><div className="registry-summary"><b>4 real benchmark models</b><span>Metal component · bottle · cable assembly · pill</span></div>{registeredRecipes.map(([id, recipe]) => <article className={`registry-card ${id === scenarioId ? "selected-recipe" : ""}`} key={id}><div className="registry-title"><span>{id === scenarioId ? "SELECTED BENCHMARK MODEL" : "BENCHMARK MODEL"}</span><h3>{recipe.name} Anomaly v1.0</h3><p>PatchCore · ResNet-18 · {recipe.modelSize} ONNX</p></div><dl><dt>Recipe scope</dt><dd>{recipe.area} / {recipe.name}</dd><dt>Training set</dt><dd>{recipe.training} acceptable benchmark images</dd><dt>Validation set</dt><dd>{recipe.testing} held-out images</dd><dt>Image F1</dt><dd>{recipe.imageF1.toFixed(2)}%</dd><dt>Pixel F1</dt><dd>{recipe.pixelF1.toFixed(2)}%</dd><dt>Production status</dt><dd>Not production-trained</dd></dl></article>)}<article className="registry-card data-gate"><div className="registry-title"><span>PRODUCTION DATA GATE</span><h3>No customer production dataset connected</h3><p>A production recipe must represent the real line, product, camera, and operating variation.</p></div><dl><dt>Recommended baseline</dt><dd>500+ accepted images per SKU/variant</dd><dt>Coverage</dt><dd>Multiple shifts, lots, cameras, lighting states, positions, and suppliers</dd><dt>Defect evidence</dt><dd>Quality-approved defect examples and labels</dd><dt>Release gate</dt><dd>Held-out validation against the customer quality plan</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>MULTI-VARIANT DESIGN</span><h3>Pill product family</h3><p>Separate recipes prevent a round tablet, capsule, blister, color, or imprint change from being judged by the wrong model.</p></div><dl><dt>Active POC recipe</dt><dd>Benchmark pill family</dd><dt>Enrollment-ready</dt><dd>Round tablet, capsule, blister pack, and customer-defined SKU</dd><dt>Routing key</dt><dd>Manufacturer + product code + dosage + shape + color + imprint + pack layout</dd><dt>Unknown product action</dt><dd>Hold and create enrollment request</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>PLANNED · NOT TRAINED</span><h3>Almond quality inspection</h3><p>Planned real-food scenario using the HyperNut almond anomaly dataset.</p></div><dl><dt>Planned checks</dt><dd>Scratch, broken, rotten, insect, foreign material, mixed nut</dd><dt>Status</dt><dd>Unavailable for inference</dd><dt>Data source</dt><dd>HyperNut benchmark</dd></dl></article><article className="registry-card roadmap-card"><div className="registry-title"><span>PLANNED · INPUT REQUIRED</span><h3>3D / depth inspection</h3><p>A real 3D model requires the target sensor format and representative good/defective scans.</p></div><dl><dt>Supported design targets</dt><dd>Depth map, PLY/PCD point cloud, or RGB-D frame pair</dd><dt>Status</dt><dd>2D models must not be used as 3D validators</dd><dt>Next decision</dt><dd>Choose camera/sensor and inspection tolerance</dd></dl></article></div>}
             {view === "settings" && <div className="workspace-view"><article className="settings-card"><h3>POC settings</h3><label><span>Decision source</span><select defaultValue="model"><option value="model">Trained model threshold</option></select></label><label><span>Inference device</span><select defaultValue="browser"><option value="browser">Local browser (WASM)</option></select></label><label><span>Heatmap overlay</span><input type="checkbox" defaultChecked /></label><p>Settings are device-local for this proof of concept. Production settings require authenticated, persistent storage.</p></article></div>}
           </section>
         </div>

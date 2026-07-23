@@ -1,4 +1,4 @@
-"""Train and evaluate the ForgeSight metal-nut anomaly model.
+"""Train and evaluate the QEVRA AI metal-nut anomaly model.
 
 The training split contains only acceptable parts. Test images include unseen
 acceptable parts and four anomaly types with pixel-level masks.

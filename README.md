@@ -1,8 +1,8 @@
-# vinext-starter
+# QEVRA AI
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+QEVRA AI is an enterprise industrial quality-intelligence platform for governed
+visual inspection, live camera inference, dataset management, model training,
+human review, and end-to-end traceability.
 
 ## Prerequisites
 

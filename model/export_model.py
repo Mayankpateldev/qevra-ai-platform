@@ -1,4 +1,4 @@
-"""Export the evaluated ForgeSight PatchCore model to portable ONNX."""
+"""Export the evaluated QEVRA AI PatchCore model to portable ONNX."""
 
 from pathlib import Path
 

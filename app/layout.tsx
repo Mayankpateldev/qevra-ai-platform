@@ -18,8 +18,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("host") ?? "localhost:3000";
   const protocol = host.includes("localhost") ? "http" : "https";
   const imageUrl = `${protocol}://${host}/og.png`;
-  const title = "ForgeSight AI — Quality Intelligence for Modern Factories";
-  const description = "Catch defects, trace their source, and improve every production run with explainable AI inspection.";
+  const title = "QEVRA AI — Manufacturing Quality Intelligence";
+  const description = "Route every product to the right visual-inspection recipe, detect anomalies at the edge, and keep every decision traceable.";
 
   return {
     title,

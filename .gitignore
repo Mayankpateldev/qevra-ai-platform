@@ -45,3 +45,9 @@ next-env.d.ts
 /public/models/forgesight-bottle.onnx
 /public/models/forgesight-cable.onnx
 /public/models/forgesight-pill.onnx
+/public/models/forgesight-pill.onnx.part*
+
+# local compiler and conflict-copy artifacts
+*.tsbuildinfo
+/app/page 2.tsx
+/app/globals 2.css
